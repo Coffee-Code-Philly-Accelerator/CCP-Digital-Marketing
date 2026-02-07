@@ -49,6 +49,35 @@ RECIPE_IDS = {
 
 COMPOSIO_API_BASE = "https://backend.composio.dev/api/v1"
 
+# Keys that should be redacted in logs
+SENSITIVE_KEYS = {"api_key", "password", "secret", "token", "credential", "auth"}
+
+
+def redact_sensitive_data(data, sensitive_keys=SENSITIVE_KEYS):
+    """
+    Redact sensitive values from a dictionary for safe logging.
+
+    Args:
+        data: Dictionary to redact
+        sensitive_keys: Set of key substrings to redact
+
+    Returns:
+        New dictionary with sensitive values replaced with "***REDACTED***"
+    """
+    if not isinstance(data, dict):
+        return data
+
+    redacted = {}
+    for key, value in data.items():
+        key_lower = key.lower()
+        if any(sk in key_lower for sk in sensitive_keys):
+            redacted[key] = "***REDACTED***"
+        elif isinstance(value, dict):
+            redacted[key] = redact_sensitive_data(value, sensitive_keys)
+        else:
+            redacted[key] = value
+    return redacted
+
 
 # =============================================================================
 # API Client
@@ -93,7 +122,7 @@ class ComposioRecipeClient:
         url = f"{COMPOSIO_API_BASE}/recipes/{recipe_id}/execute"
 
         print(f"[{self._timestamp()}] Executing recipe: {recipe_id}")
-        print(f"[{self._timestamp()}] Input: {json.dumps(input_data, indent=2)}")
+        print(f"[{self._timestamp()}] Input: {json.dumps(redact_sensitive_data(input_data), indent=2)}")
 
         try:
             response = self.session.post(url, json={"input_data": input_data})
@@ -106,12 +135,17 @@ class ComposioRecipeClient:
             return result
 
         except requests.exceptions.HTTPError as e:
-            error_detail = e.response.text if e.response else str(e)
-            print(f"[{self._timestamp()}] HTTP Error: {e.response.status_code}")
+            status_code = e.response.status_code if e.response else "unknown"
+            # Truncate error details to avoid exposing sensitive API responses
+            error_detail = (e.response.text[:500] + "...") if e.response and len(e.response.text) > 500 else (e.response.text if e.response else str(e))
+            print(f"[{self._timestamp()}] HTTP Error: {status_code}")
             print(f"[{self._timestamp()}] Details: {error_detail}")
-            return {"error": str(e), "details": error_detail}
+            return {"error": f"HTTP {status_code}", "details": error_detail}
+        except requests.exceptions.RequestException as e:
+            print(f"[{self._timestamp()}] Request error: {type(e).__name__}: {e}")
+            return {"error": f"{type(e).__name__}: {e}"}
         except Exception as e:
-            print(f"[{self._timestamp()}] Error: {e}")
+            print(f"[{self._timestamp()}] Unexpected error: {type(e).__name__}: {e}")
             return {"error": str(e)}
 
     def _poll_execution(self, execution_id: str, timeout: int) -> Dict[str, Any]:
@@ -135,8 +169,8 @@ class ComposioRecipeClient:
 
                 time.sleep(5)  # Poll every 5 seconds
 
-            except Exception as e:
-                print(f"[{self._timestamp()}] Poll error: {e}")
+            except requests.exceptions.RequestException as e:
+                print(f"[{self._timestamp()}] Poll error: {type(e).__name__}: {e}")
                 time.sleep(5)
 
         return {"error": "Timeout waiting for execution", "execution_id": execution_id}
@@ -148,8 +182,8 @@ class ComposioRecipeClient:
             response = self.session.get(url)
             response.raise_for_status()
             return response.json()
-        except Exception as e:
-            return {"error": str(e)}
+        except requests.exceptions.RequestException as e:
+            return {"error": f"{type(e).__name__}: {e}"}
 
     @staticmethod
     def _timestamp() -> str:

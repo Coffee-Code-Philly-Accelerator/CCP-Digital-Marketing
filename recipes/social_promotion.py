@@ -29,15 +29,100 @@ import json
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
+# ============================================================================
+# Mockable Interface for External Dependencies
+# ============================================================================
+# These functions are normally injected by the Composio runtime.
+# Providing mock implementations enables local testing and unit tests.
+
+try:
+    # Check if run_composio_tool is available (injected by Composio runtime)
+    run_composio_tool
+except NameError:
+    def run_composio_tool(tool_name, arguments):
+        """Mock implementation for local testing"""
+        print(f"[MOCK] run_composio_tool({tool_name}, {arguments})")
+        return {"data": {"mock": True, "sub": "mock_user", "id": "mock_id"}}, None
+
+try:
+    # Check if invoke_llm is available (injected by Composio runtime)
+    invoke_llm
+except NameError:
+    def invoke_llm(prompt):
+        """Mock implementation for local testing"""
+        print(f"[MOCK] invoke_llm(prompt length={len(prompt)})")
+        return '{"twitter": "mock", "linkedin": "mock", "instagram": "mock", "facebook": "mock", "discord": "mock"}', None
+
 print(f"[{datetime.utcnow().isoformat()}] Starting social media promotion workflow")
 
-# Get inputs
-event_title = os.environ.get("event_title")
-event_date = os.environ.get("event_date")
-event_time = os.environ.get("event_time")
-event_location = os.environ.get("event_location")
-event_description = os.environ.get("event_description")
-event_url = os.environ.get("event_url", "")
+
+def sanitize_input(text, max_len=2000):
+    """
+    Sanitize user input to prevent prompt injection attacks.
+
+    Args:
+        text: Input text to sanitize
+        max_len: Maximum allowed length (default 2000)
+
+    Returns:
+        Sanitized string safe for inclusion in LLM prompts
+    """
+    if not text:
+        return ""
+    # Convert to string if needed
+    text = str(text)
+    # Remove control characters except newlines and tabs
+    text = ''.join(char for char in text if char >= ' ' or char in '\n\t')
+    # Replace common prompt injection delimiters
+    text = text.replace("```", "'''")
+    text = text.replace("---", "___")
+    # Truncate to max length
+    return text[:max_len]
+
+
+def extract_json_from_text(text):
+    """
+    Robustly extract JSON object from LLM response text.
+
+    Handles cases where JSON is embedded in explanatory text,
+    has nested structures, or spans multiple lines.
+
+    Args:
+        text: String that may contain a JSON object
+
+    Returns:
+        Parsed dict if found, empty dict otherwise
+    """
+    if not text:
+        return {}
+
+    # Try to find JSON by matching outermost braces
+    start = text.find('{')
+    if start == -1:
+        return {}
+
+    # Find matching closing brace by counting depth
+    depth = 0
+    for i, char in enumerate(text[start:], start):
+        if char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    return {}
+
+    return {}
+
+# Get inputs and sanitize user-provided content
+event_title = sanitize_input(os.environ.get("event_title"), max_len=200)
+event_date = sanitize_input(os.environ.get("event_date"), max_len=100)
+event_time = sanitize_input(os.environ.get("event_time"), max_len=100)
+event_location = sanitize_input(os.environ.get("event_location"), max_len=500)
+event_description = sanitize_input(os.environ.get("event_description"), max_len=5000)
+event_url = os.environ.get("event_url", "")  # URL not sanitized - passed through
 discord_channel_id = os.environ.get("discord_channel_id", "")
 facebook_page_id = os.environ.get("facebook_page_id", "")
 skip_platforms_str = os.environ.get("skip_platforms", "")
@@ -109,13 +194,10 @@ if copy_error:
         "discord": f"**{event_title}**\n\n{default_copy}"
     }
 else:
-    try:
-        json_match = re.search(r'\{[^{}]*\}', copy_response, re.DOTALL)
-        if json_match:
-            copies = json.loads(json_match.group())
-        else:
-            raise ValueError("No JSON found")
-    except:
+    copies = extract_json_from_text(copy_response)
+    required_keys = ["twitter", "linkedin", "instagram", "facebook", "discord"]
+    if not copies or not all(k in copies for k in required_keys):
+        print(f"[{datetime.utcnow().isoformat()}] JSON extraction incomplete, using default copy")
         default_copy = f"{event_title}\n\n{event_date} at {event_time}\n{event_location}\n\nRSVP: {event_url}"
         copies = {
             "twitter": default_copy[:280],
@@ -125,23 +207,56 @@ else:
             "discord": f"**{event_title}**\n\n{default_copy}"
         }
 
-# Step 3: Post to each platform
-def post_to_twitter():
-    if "twitter" in skip_platforms:
+# Step 3: Post to each platform using generic posting function
+
+def extract_data(result):
+    """Extract data from Composio's double-nested response format"""
+    if not result:
+        return {}
+    data = result.get("data", {})
+    if isinstance(data, dict) and "data" in data:
+        data = data["data"]
+    return data if isinstance(data, dict) else {}
+
+
+def post_to_platform(name, tool_name, payload, prereq_check=None):
+    """
+    Generic function to post to any social platform.
+
+    Args:
+        name: Platform name (for logging and skip check)
+        tool_name: Composio tool slug
+        payload: Dict of arguments for the tool
+        prereq_check: Optional callable that returns (success, skip_reason) tuple
+
+    Returns:
+        Status string: "success", "skipped", "skipped: <reason>", or "failed: <error>"
+    """
+    if name in skip_platforms:
         return "skipped"
 
-    print(f"[{datetime.utcnow().isoformat()}] Posting to Twitter...")
+    if prereq_check:
+        success, reason = prereq_check()
+        if not success:
+            return f"skipped: {reason}" if reason else "skipped"
+
+    print(f"[{datetime.utcnow().isoformat()}] Posting to {name.title()}...")
+
+    result, error = run_composio_tool(tool_name, payload)
+    return "success" if not error else f"failed: {error}"
+
+
+def post_to_twitter():
+    """Post event to Twitter"""
     tweet_text = copies.get("twitter", event_title)[:280]
     if results["image_url"]:
         tweet_text = tweet_text[:250] + f"\n\n{results['image_url']}"
 
-    tw_result, tw_error = run_composio_tool("TWITTER_CREATION_OF_A_POST", {
-        "text": tweet_text
-    })
+    return post_to_platform("twitter", "TWITTER_CREATION_OF_A_POST", {"text": tweet_text})
 
-    return "success" if not tw_error else f"failed: {tw_error}"
 
 def post_to_linkedin():
+    """Post event to LinkedIn with auto-discovered user URN"""
     if "linkedin" in skip_platforms:
         return "skipped"
 
@@ -152,29 +267,25 @@ def post_to_linkedin():
     if profile_error:
         return f"failed: Could not get profile - {profile_error}"
 
-    profile_data = profile_result.get("data", {})
-    if "data" in profile_data:
-        profile_data = profile_data["data"]
-
+    profile_data = extract_data(profile_result)
     sub = profile_data.get("sub", "")
     if not sub:
         return "failed: Could not determine user URN"
-
-    author_urn = f"urn:li:person:{sub}"
 
     li_text = copies.get("linkedin", event_description)
     if event_url:
         li_text += f"\n\nRSVP: {event_url}"
 
-    li_result, li_error = run_composio_tool("LINKEDIN_CREATE_LINKED_IN_POST", {
-        "author": author_urn,
+    result, error = run_composio_tool("LINKEDIN_CREATE_LINKED_IN_POST", {
+        "author": f"urn:li:person:{sub}",
         "commentary": li_text,
         "visibility": "PUBLIC"
     })
+    return "success" if not error else f"failed: {error}"
 
-    return "success" if not li_error else f"failed: {li_error}"
 
 def post_to_instagram():
+    """Post event to Instagram with auto-discovered user ID"""
     if "instagram" in skip_platforms:
         return "skipped"
 
@@ -188,64 +299,52 @@ def post_to_instagram():
     if user_error:
         return f"failed: Could not get user info - {user_error}"
 
-    user_data = user_result.get("data", {})
-    if "data" in user_data:
-        user_data = user_data["data"]
-
+    user_data = extract_data(user_result)
     user_id = user_data.get("id", "")
     if not user_id:
         return "failed: Could not determine user ID"
 
-    ig_caption = copies.get("instagram", event_description)
-
-    ig_result, ig_error = run_composio_tool("INSTAGRAM_MEDIA_POST_MEDIA", {
+    result, error = run_composio_tool("INSTAGRAM_MEDIA_POST_MEDIA", {
         "user_id": user_id,
         "image_url": results["image_url"],
-        "caption": ig_caption,
+        "caption": copies.get("instagram", event_description),
         "media_type": "IMAGE"
     })
+    return "success" if not error else f"failed: {error}"
 
-    return "success" if not ig_error else f"failed: {ig_error}"
 
 def post_to_facebook():
-    if "facebook" in skip_platforms:
-        return "skipped"
-
-    if not facebook_page_id:
-        return "skipped: No page ID provided"
-
-    print(f"[{datetime.utcnow().isoformat()}] Posting to Facebook...")
+    """Post event to Facebook page"""
+    def check_page_id():
+        return (bool(facebook_page_id), "No page ID provided" if not facebook_page_id else None)
 
     fb_message = copies.get("facebook", event_description)
     if event_url:
         fb_message += f"\n\nRSVP: {event_url}"
 
-    fb_result, fb_error = run_composio_tool("FACEBOOK_CREATE_PAGE_POST", {
-        "page_id": facebook_page_id,
-        "message": fb_message
-    })
+    return post_to_platform(
+        "facebook",
+        "FACEBOOK_CREATE_PAGE_POST",
+        {"page_id": facebook_page_id, "message": fb_message},
+        prereq_check=check_page_id
+    )
 
-    return "success" if not fb_error else f"failed: {fb_error}"
 
 def post_to_discord():
-    if "discord" in skip_platforms:
-        return "skipped"
-
-    if not discord_channel_id:
-        return "skipped: No channel ID provided"
-
-    print(f"[{datetime.utcnow().isoformat()}] Posting to Discord...")
+    """Post event to Discord channel"""
+    def check_channel_id():
+        return (bool(discord_channel_id), "No channel ID provided" if not discord_channel_id else None)
 
     dc_content = copies.get("discord", f"**{event_title}**\n\n{event_description}")
     if event_url:
         dc_content += f"\n\nRSVP: {event_url}"
 
-    dc_result, dc_error = run_composio_tool("DISCORD_SEND_MESSAGE", {
-        "channel_id": discord_channel_id,
-        "content": dc_content
-    })
-
-    return "success" if not dc_error else f"failed: {dc_error}"
+    return post_to_platform(
+        "discord",
+        "DISCORD_SEND_MESSAGE",
+        {"channel_id": discord_channel_id, "content": dc_content},
+        prereq_check=check_channel_id
+    )
 
 # Execute posts in parallel
 with ThreadPoolExecutor(max_workers=5) as executor:

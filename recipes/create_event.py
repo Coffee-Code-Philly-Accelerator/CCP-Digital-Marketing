@@ -38,6 +38,30 @@ import random
 from datetime import datetime
 from enum import Enum
 
+# ============================================================================
+# Mockable Interface for External Dependencies
+# ============================================================================
+# These functions are normally injected by the Composio runtime.
+# Providing mock implementations enables local testing and unit tests.
+
+try:
+    # Check if run_composio_tool is available (injected by Composio runtime)
+    run_composio_tool
+except NameError:
+    def run_composio_tool(tool_name, arguments):
+        """Mock implementation for local testing"""
+        print(f"[MOCK] run_composio_tool({tool_name}, {arguments})")
+        return {"data": {"mock": True}}, None
+
+try:
+    # Check if invoke_llm is available (injected by Composio runtime)
+    invoke_llm
+except NameError:
+    def invoke_llm(prompt):
+        """Mock implementation for local testing"""
+        print(f"[MOCK] invoke_llm(prompt length={len(prompt)})")
+        return '{"luma": "mock desc", "meetup": "mock desc", "partiful": "mock desc"}', None
+
 print(f"[{datetime.utcnow().isoformat()}] Starting unified event creation workflow v3")
 
 
@@ -93,6 +117,30 @@ BACKOFF_MULTIPLIER = 2.0
 # SECTION 2: Helper Functions
 # ============================================================================
 
+def sanitize_input(text, max_len=2000):
+    """
+    Sanitize user input to prevent prompt injection attacks.
+
+    Args:
+        text: Input text to sanitize
+        max_len: Maximum allowed length (default 2000)
+
+    Returns:
+        Sanitized string safe for inclusion in LLM prompts
+    """
+    if not text:
+        return ""
+    # Convert to string if needed
+    text = str(text)
+    # Remove control characters except newlines and tabs
+    text = ''.join(char for char in text if char >= ' ' or char in '\n\t')
+    # Replace common prompt injection delimiters
+    text = text.replace("```", "'''")
+    text = text.replace("---", "___")
+    # Truncate to max length
+    return text[:max_len]
+
+
 def extract_data(result):
     """Extract data from Composio's double-nested response format"""
     if not result:
@@ -101,6 +149,43 @@ def extract_data(result):
     if isinstance(data, dict) and "data" in data:
         data = data["data"]
     return data if isinstance(data, dict) else {}
+
+
+def extract_json_from_text(text):
+    """
+    Robustly extract JSON object from LLM response text.
+
+    Handles cases where JSON is embedded in explanatory text,
+    has nested structures, or spans multiple lines.
+
+    Args:
+        text: String that may contain a JSON object
+
+    Returns:
+        Parsed dict if found, empty dict otherwise
+    """
+    if not text:
+        return {}
+
+    # Try to find JSON by matching outermost braces
+    start = text.find('{')
+    if start == -1:
+        return {}
+
+    # Find matching closing brace by counting depth
+    depth = 0
+    for i, char in enumerate(text[start:], start):
+        if char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    return {}
+
+    return {}
 
 
 def backoff_delay(attempt, base_delay=DEFAULT_BASE_DELAY, max_delay=DEFAULT_MAX_DELAY):
@@ -423,7 +508,7 @@ class EventCreationStateMachine:
             if idx + 1 < len(self.STATE_FLOW):
                 return self.STATE_FLOW[idx + 1]
         except ValueError:
-            pass
+            log(self.platform, self.state, f"WARNING: State {self.state} not found in STATE_FLOW, jumping to DONE")
         return EventState.DONE
 
     def _handle_init(self):
@@ -604,13 +689,13 @@ class EventCreationStateMachine:
 # SECTION 5: Main Workflow
 # ============================================================================
 
-# Get inputs
-event_title = os.environ.get("event_title")
-event_date = os.environ.get("event_date")
-event_time = os.environ.get("event_time")
-event_location = os.environ.get("event_location")
-event_description = os.environ.get("event_description")
-meetup_group_url = os.environ.get("meetup_group_url", "")
+# Get inputs and sanitize user-provided content
+event_title = sanitize_input(os.environ.get("event_title"), max_len=200)
+event_date = sanitize_input(os.environ.get("event_date"), max_len=100)
+event_time = sanitize_input(os.environ.get("event_time"), max_len=100)
+event_location = sanitize_input(os.environ.get("event_location"), max_len=500)
+event_description = sanitize_input(os.environ.get("event_description"), max_len=5000)
+meetup_group_url = os.environ.get("meetup_group_url", "")  # URL validated separately
 platforms_str = os.environ.get("platforms", "luma,meetup,partiful")
 skip_platforms_str = os.environ.get("skip_platforms", "")
 
@@ -670,13 +755,9 @@ if desc_error:
     print(f"[{datetime.utcnow().isoformat()}] Description generation failed, using original")
     descriptions = {"luma": event_description, "meetup": event_description, "partiful": event_description}
 else:
-    try:
-        json_match = re.search(r'\{[^{}]*\}', desc_response, re.DOTALL)
-        if json_match:
-            descriptions = json.loads(json_match.group())
-        else:
-            descriptions = {"luma": event_description, "meetup": event_description, "partiful": event_description}
-    except:
+    descriptions = extract_json_from_text(desc_response)
+    if not descriptions or not all(k in descriptions for k in ["luma", "meetup", "partiful"]):
+        print(f"[{datetime.utcnow().isoformat()}] JSON extraction incomplete, using original description")
         descriptions = {"luma": event_description, "meetup": event_description, "partiful": event_description}
 
 print(f"[{datetime.utcnow().isoformat()}] Descriptions ready for all platforms")
