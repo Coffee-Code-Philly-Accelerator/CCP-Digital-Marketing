@@ -57,5 +57,9 @@ credentials.json
 .env.local
 .env.*.local
 
+# Coverage
+.coverage
+htmlcov/
+
 # Composio
 .composio/
