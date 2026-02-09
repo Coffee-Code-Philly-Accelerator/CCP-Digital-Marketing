@@ -24,12 +24,14 @@ This skill is triggered when the user wants to:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `image_prompt` | string | auto-generated | Custom prompt for AI image generation |
-| `tenant_id` | string | "default" | Tenant identifier for multi-tenant sessions |
 | `discord_channel_id` | string | "" | Discord channel for social promotion |
 | `facebook_page_id` | string | "" | Facebook page for social promotion |
 | `skip_event_platforms` | string | "" | Comma-separated event platforms to skip, e.g., "meetup,partiful" |
 | `skip_social_platforms` | string | "" | Comma-separated social platforms to skip, e.g., "facebook,discord" |
+
+## Prerequisites
+
+Before running, ensure all platform profiles are set up via the **auth-setup** skill. Each platform (Luma, Meetup, Partiful) needs a Hyperbrowser persistent profile with saved login cookies.
 
 ## Execution
 
@@ -48,9 +50,7 @@ RUBE_EXECUTE_RECIPE(
         "event_date": "<date>",
         "event_time": "<time>",
         "event_location": "<location>",
-        "event_description": "<description>",
-        "image_prompt": "<optional>",
-        "tenant_id": "<tenant>"
+        "event_description": "<description>"
     }
 )
 ```
@@ -64,9 +64,7 @@ RUBE_EXECUTE_RECIPE(
         "event_date": "<date>",
         "event_time": "<time>",
         "event_location": "<location>",
-        "event_description": "<description>",
-        "image_prompt": "<optional>",
-        "tenant_id": "<tenant>"
+        "event_description": "<description>"
     }
 )
 ```
@@ -80,20 +78,41 @@ RUBE_EXECUTE_RECIPE(
         "event_date": "<date>",
         "event_time": "<time>",
         "event_location": "<location>",
-        "event_description": "<description>",
-        "image_prompt": "<optional>",
-        "tenant_id": "<tenant>"
+        "event_description": "<description>"
     }
 )
 ```
 
 ### Phase 1 Result Handling
 
-After each recipe completes:
+Each event creation recipe returns immediately with `status: "running"`, a `task_id`, and provider information (`provider`, `poll_tool`, `poll_args_key`). After each recipe returns:
 
-1. **If `status` is `"done"`**: Record the `event_url` and `image_url`. Continue to the next platform.
-2. **If `status` is `"paused_2fa"` or `"needs_auth"`**: Inform the user which platform needs authentication. Wait for user confirmation, then re-run the same recipe with `resume=true`. After resume succeeds, continue.
-3. **If `status` is `"failed"`**: Log the error and continue to the next platform. Do not abort the entire workflow.
+1. **Poll for completion** using the provider-specific tool:
+
+   **If `provider` is `"hyperbrowser"`:**
+   ```
+   RUBE_MULTI_EXECUTE_TOOL(
+       tool_slug="HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS",
+       arguments={"task_id": "<task_id from recipe>"}
+   )
+   ```
+   - `status: "completed"` → done, check result for event URL
+   - `status: "running"` → still running, poll again in 10-15 seconds
+   - `status: "failed"` → task failed, log error and continue
+
+   **If `provider` is `"browser_tool"`:**
+   ```
+   RUBE_MULTI_EXECUTE_TOOL(
+       tool_slug="BROWSER_TOOL_WATCH_TASK",
+       arguments={"taskId": "<task_id from recipe>"}
+   )
+   ```
+   - `status: "finished"` → check `current_url` against the platform's success URL pattern. Record as the event URL.
+   - `status: "started"` → still running, poll again in 10-15 seconds
+   - `status: "stopped"` → task was aborted, log error and continue
+
+2. **If authentication is needed**: The browser task may navigate to a login page. Inform the user and wait for them to re-authenticate via the auth-setup skill (Hyperbrowser) or Composio connected accounts (browser_tool), then re-run.
+3. Continue to the next platform regardless of success/failure.
 
 ### URL Priority
 
@@ -148,22 +167,10 @@ Present a combined summary to the user:
 Primary event URL: https://lu.ma/abc123
 ```
 
-## Auth/2FA Resume Flow
-
-If any event creation recipe returns `status: "paused_2fa"` or `status: "needs_auth"`:
-
-1. Inform the user which platform needs authentication
-2. Wait for the user to confirm they have logged in / completed 2FA in the browser
-3. Re-run that platform's recipe with `resume=true`
-4. After resume, continue the workflow with the next platform
-
-Example response to user:
-> Luma event created successfully. Meetup requires authentication.
-> Please log in to Meetup in your browser, then let me know to continue.
-
 ## Platform Notes
 
 - **Event creation is sequential** - browser automation sessions cannot overlap
 - **Social promotion runs in parallel internally** - the recipe handles parallelism via ThreadPoolExecutor
 - **Image reuse** - the `image_url` from the first successful event creation is passed to social promotion, skipping redundant Gemini generation
 - **Partial success is OK** - if one event platform fails, the workflow continues with remaining platforms and proceeds to social promotion with whatever URLs are available
+- **Browser provider** - defaults to Hyperbrowser with persistent profiles. Ensure auth-setup has been run for each platform before starting.

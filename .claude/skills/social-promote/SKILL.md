@@ -26,10 +26,10 @@ This skill is triggered when the user wants to:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `image_url` | string | "" | Reuse an existing image URL (skips Gemini generation) |
-| `linkedin_author_urn` | string | "" | LinkedIn author URN (auto-discovered if empty) |
-| `ig_user_id` | string | "" | Instagram Business Account ID (auto-discovered if empty) |
 | `discord_channel_id` | string | "" | Discord channel to post to (required for Discord) |
 | `facebook_page_id` | string | "" | Facebook page to post to (required for Facebook) |
+
+**Note**: `discord_channel_id` and `facebook_page_id` also fall back to `CCP_DISCORD_CHANNEL_ID` and `CCP_FACEBOOK_PAGE_ID` environment variables if not provided as recipe inputs.
 
 ## Execution
 
@@ -46,8 +46,6 @@ RUBE_EXECUTE_RECIPE(
         "event_description": "<description>",
         "event_url": "<url>",
         "image_url": "<optional existing image URL>",
-        "linkedin_author_urn": "<optional, auto-discovered if empty>",
-        "ig_user_id": "<optional, auto-discovered if empty>",
         "discord_channel_id": "<optional>",
         "facebook_page_id": "<optional>"
     }
@@ -60,20 +58,13 @@ The recipe returns:
 
 ```json
 {
-  "twitter_status": "success|skipped|failed",
-  "twitter_post_id": "...",
-  "linkedin_status": "success|skipped: no URN|failed",
-  "linkedin_post_id": "...",
-  "instagram_status": "success|skipped: no user_id|skipped: no image|failed",
-  "instagram_post_id": "...",
-  "facebook_status": "success|skipped: no page_id|failed",
-  "facebook_post_id": "...",
-  "discord_status": "success|skipped: no channel_id|failed",
-  "discord_message_id": "...",
-  "generated_image_url": "https://...",
-  "discovered_linkedin_urn": "urn:li:person:...",
-  "discovered_ig_user_id": "...",
-  "summary": "Posted: ['twitter', 'linkedin']. Skipped: ['facebook', 'discord']"
+  "twitter_posted": "success|skipped|failed: <error>",
+  "linkedin_posted": "success|skipped|failed: <error>",
+  "instagram_posted": "success|skipped: No image available|failed: <error>",
+  "facebook_posted": "success|skipped: No page ID provided|failed: <error>",
+  "discord_posted": "success|skipped: No channel ID provided|failed: <error>",
+  "image_url": "https://...",
+  "summary": "Posted to N/5 platforms"
 }
 ```
 
@@ -82,12 +73,11 @@ The recipe returns:
 | Status | Meaning |
 |--------|---------|
 | `success` | Posted successfully |
-| `skipped: no URN` | LinkedIn skipped, URN not provided and auto-discovery failed |
-| `skipped: no user_id` | Instagram skipped, user ID not provided and auto-discovery failed |
-| `skipped: no image` | Instagram skipped because no image was generated or provided |
-| `skipped: no page_id` | Facebook skipped because `facebook_page_id` was not set |
-| `skipped: no channel_id` | Discord skipped because `discord_channel_id` was not set |
-| `failed` | API error from the platform |
+| `skipped` | Platform intentionally skipped via `skip_platforms` |
+| `skipped: No image available` | Instagram skipped because no image was generated or provided |
+| `skipped: No page ID provided` | Facebook skipped because `facebook_page_id` was not set |
+| `skipped: No channel ID provided` | Discord skipped because `discord_channel_id` was not set |
+| `failed: <error>` | API error from the platform (error message included) |
 
 ## Chaining from Event Creation
 

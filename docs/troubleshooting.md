@@ -5,6 +5,8 @@ Common issues and solutions for the CCP Digital Marketing automation system.
 ## Table of Contents
 
 - [Event Creation Issues](#event-creation-issues)
+- [Apostrophe Issues](#apostrophe-issues-syntaxerror)
+- [Browser Task Polling Issues](#rube_execute_recipe-returns-no-output-for-browser-recipes)
 - [Social Promotion Issues](#social-promotion-issues)
 - [Connection Issues](#connection-issues)
 - [AI Generation Issues](#ai-generation-issues)
@@ -15,35 +17,24 @@ Common issues and solutions for the CCP Digital Marketing automation system.
 
 ### NEEDS_AUTH Status
 
-**Symptom:** Recipe returns `NEEDS_AUTH` for a platform
+**Symptom:** Browser task navigates to a login page instead of the create form
 
 **Cause:** Browser session is not logged into the platform
 
 **Solution:**
 ```mermaid
 flowchart TD
-    A[NEEDS_AUTH Error] --> B[Open platform in browser]
-    B --> C[Log in to your account]
-    C --> D{2FA Required?}
-    D -->|Yes| E[Complete 2FA]
-    D -->|No| F[Re-run recipe]
-    E --> F
-    F --> G{Still NEEDS_AUTH?}
-    G -->|Yes| H[Clear browser cookies<br/>Try incognito]
-    G -->|No| I[Success!]
+    A[Auth Error] --> B[Open Composio Dashboard]
+    B --> C[Check connected accounts]
+    C --> D{Account connected?}
+    D -->|No| E[Connect account in Composio]
+    D -->|Yes| F[Re-authenticate / refresh connection]
+    E --> G[Re-run recipe]
+    F --> G
+    G --> H{Still failing?}
+    H -->|Yes| I[Try different browser session]
+    H -->|No| J[Success!]
 ```
-
-### NEEDS_REVIEW Status
-
-**Symptom:** Recipe returns `NEEDS_REVIEW` - uncertain if event was published
-
-**Cause:** Form was submitted but event URL couldn't be captured
-
-**Solution:**
-1. Log into the platform manually
-2. Check for draft/pending events
-3. Look in "My Events" or similar section
-4. Publish manually if event is in draft
 
 ### Form Filling Fails
 
@@ -64,8 +55,34 @@ flowchart TD
 
 **Solution:**
 1. Verify you're an organizer/co-organizer
-2. Check the `meetup_group_url` is correct
+2. Check the `meetup_group_url` is correct (default: `https://www.meetup.com/code-coffee-philly`)
 3. Ensure URL format is `https://www.meetup.com/your-group-name`
+
+---
+
+## Apostrophe Issues (SyntaxError)
+
+**Symptom:** Recipe execution fails with a SyntaxError in Rube's env var injection
+
+**Cause:** Straight apostrophes (`'`) in input strings conflict with Rube's Python string parsing
+
+**Solution:** This is now handled automatically. All recipes convert straight apostrophes to curly quotes (\u2019) via `sanitize_input()`. If you still encounter this:
+1. Check that you're using the latest recipe version
+2. Re-upload recipes via `RUBE_CREATE_UPDATE_RECIPE`
+
+---
+
+## RUBE_EXECUTE_RECIPE Returns No Output for Browser Recipes
+
+**Symptom:** `RUBE_EXECUTE_RECIPE` returns but the output is empty or doesn't contain event URLs
+
+**Cause:** Event creation recipes use fire-and-forget pattern. They start a browser task and return immediately with a `task_id`. The actual event creation happens asynchronously.
+
+**Solution:** After `RUBE_EXECUTE_RECIPE` returns, poll `BROWSER_TOOL_WATCH_TASK` using `RUBE_MULTI_EXECUTE_TOOL`:
+1. Extract `task_id` from the recipe output
+2. Call `RUBE_MULTI_EXECUTE_TOOL` with `tool_slug="BROWSER_TOOL_WATCH_TASK"` and `arguments={"taskId": "<task_id>"}`
+3. Check `status` in the response: "started" (still running), "finished" (done), "stopped" (failed)
+4. Poll every 10-15 seconds until finished or stopped
 
 ---
 
@@ -117,7 +134,7 @@ flowchart TD
 
 **Common Issues:**
 
-1. **No page_id provided:** Recipe needs your Facebook Page ID
+1. **No page_id provided:** Recipe needs your Facebook Page ID (or set `CCP_FACEBOOK_PAGE_ID` env var)
 2. **Wrong permissions:** Need `pages_manage_posts` permission
 3. **Page not connected:** Connect page in Composio
 
@@ -132,13 +149,13 @@ flowchart TD
 
 **Common Issues:**
 
-1. **Invalid channel_id:** Verify the channel ID is correct
+1. **Invalid channel_id:** Verify the channel ID is correct (or set `CCP_DISCORD_CHANNEL_ID` env var)
 2. **Bot not in server:** Add the bot to your Discord server
 3. **Missing permissions:** Bot needs "Send Messages" permission
 
 **Getting Channel ID:**
 1. Enable Developer Mode in Discord settings
-2. Right-click channel → "Copy ID"
+2. Right-click channel -> "Copy ID"
 
 ---
 
@@ -156,12 +173,12 @@ flowchart TD
 
 ### Browser Session Expired
 
-**Symptom:** Event creation returns NEEDS_AUTH for all platforms
+**Symptom:** Event creation recipe's browser task navigates to login page
 
 **Solution:**
 1. The browser automation uses persistent sessions
 2. Sessions can expire after inactivity
-3. Log into each platform manually to refresh session
+3. Re-authenticate the platform connection in Composio
 4. Re-run the recipe
 
 ### Multiple Account Confusion
@@ -213,7 +230,7 @@ If multiple things are broken:
 
 ```bash
 # 1. Clear all Composio connections
-# Go to Composio Dashboard → Connections → Remove all
+# Go to Composio Dashboard -> Connections -> Remove all
 
 # 2. Re-connect each service:
 # - Twitter
@@ -222,7 +239,7 @@ If multiple things are broken:
 # - Facebook
 # - Discord
 
-# 3. Log into event platforms:
+# 3. Re-authenticate event platforms:
 # - lu.ma
 # - meetup.com
 # - partiful.com
@@ -235,14 +252,8 @@ If multiple things are broken:
 When you need to post urgently:
 
 ```python
-# Skip event platforms with issues
-RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_xvediVZu8BzW",
-    input_data={
-        ...,
-        "skip_platforms": "meetup"  # Skip Meetup
-    }
-)
+# Skip event platforms with issues (use per-platform recipes and just skip the problematic one)
+# For example, only run Luma and Partiful, skip Meetup entirely
 
 # Skip social platforms with issues
 RUBE_EXECUTE_RECIPE(

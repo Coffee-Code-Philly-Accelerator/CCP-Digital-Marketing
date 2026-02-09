@@ -5,7 +5,9 @@ CCP Digital Marketing - Recipe Client
 A Python client for executing Rube MCP recipes via the Composio API.
 
 Recipes:
-- Create Event on All Platforms (rcp_xvediVZu8BzW)
+- Create Event on Luma (rcp_mXyFyALaEsQF)
+- Create Event on Meetup (rcp_kHJoI1WmR3AR)
+- Create Event on Partiful (rcp_bN7jRF5P_Kf0)
 - Event Social Promotion (rcp_zBzqs2LO-miP)
 
 Usage:
@@ -33,7 +35,7 @@ except ImportError:
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 except ImportError:
     pass  # dotenv is optional
 
@@ -43,11 +45,17 @@ except ImportError:
 # =============================================================================
 
 RECIPE_IDS = {
-    "create_event": "rcp_xvediVZu8BzW",
+    "luma_create": "rcp_mXyFyALaEsQF",
+    "meetup_create": "rcp_kHJoI1WmR3AR",
+    "partiful_create": "rcp_bN7jRF5P_Kf0",
     "social_promotion": "rcp_zBzqs2LO-miP",
 }
 
-COMPOSIO_API_BASE = "https://backend.composio.dev/api/v1"
+EVENT_PLATFORMS = ["luma", "meetup", "partiful"]
+
+COMPOSIO_API_BASE = os.environ.get(
+    "CCP_COMPOSIO_API_BASE", "https://backend.composio.dev/api/v1"
+)
 
 # Keys that should be redacted in logs
 SENSITIVE_KEYS = {"api_key", "password", "secret", "token", "credential", "auth"}
@@ -111,7 +119,7 @@ class ComposioRecipeClient:
         Execute a recipe with the given input data.
 
         Args:
-            recipe_id: The recipe ID (e.g., "rcp_xvediVZu8BzW")
+            recipe_id: The recipe ID (e.g., "rcp_mXyFyALaEsQF")
             input_data: Dictionary of input parameters
             wait_for_completion: Whether to poll until completion
             timeout: Maximum seconds to wait
@@ -202,11 +210,11 @@ def create_event(
     location: str,
     description: str,
     meetup_group_url: str = "",
-    platforms: str = "luma,meetup,partiful",
     skip_platforms: str = "",
+    provider: str = "hyperbrowser",
 ) -> Dict[str, Any]:
     """
-    Create an event on Luma, Meetup, and Partiful.
+    Create an event on Luma, Meetup, and Partiful (sequentially, per-platform recipes).
 
     Args:
         client: ComposioRecipeClient instance
@@ -216,24 +224,40 @@ def create_event(
         location: Venue or address
         description: Event description
         meetup_group_url: Meetup group URL (required for Meetup)
-        platforms: Comma-separated platforms to create on
         skip_platforms: Comma-separated platforms to skip
 
     Returns:
-        Recipe execution result with event URLs
+        Dict with per-platform results
     """
-    input_data = {
-        "event_title": title,
-        "event_date": date,
-        "event_time": time,
-        "event_location": location,
-        "event_description": description,
-        "meetup_group_url": meetup_group_url,
-        "platforms": platforms,
-        "skip_platforms": skip_platforms,
-    }
+    skip_set = {s.strip().lower() for s in skip_platforms.split(",") if s.strip()}
+    results = {}
 
-    return client.execute_recipe(RECIPE_IDS["create_event"], input_data)
+    for platform in EVENT_PLATFORMS:
+        if platform in skip_set:
+            print(f"\n--- Skipping {platform} (user requested) ---")
+            results[platform] = {"status": "skipped"}
+            continue
+
+        print(f"\n--- Creating event on {platform} ---")
+
+        input_data = {
+            "event_title": title,
+            "event_date": date,
+            "event_time": time,
+            "event_location": location,
+            "event_description": description,
+            "CCP_BROWSER_PROVIDER": provider,
+        }
+
+        # Add meetup-specific input
+        if platform == "meetup" and meetup_group_url:
+            input_data["meetup_group_url"] = meetup_group_url
+
+        recipe_key = f"{platform}_create"
+        result = client.execute_recipe(RECIPE_IDS[recipe_key], input_data)
+        results[platform] = result
+
+    return results
 
 
 def promote_event(
@@ -291,9 +315,11 @@ def full_workflow(
     meetup_group_url: str = "",
     discord_channel_id: str = "",
     facebook_page_id: str = "",
+    skip_platforms: str = "",
+    provider: str = "hyperbrowser",
 ) -> Dict[str, Any]:
     """
-    Run the full workflow: create event + promote on social media.
+    Run the full workflow: create event on all platforms + promote on social media.
 
     Args:
         client: ComposioRecipeClient instance
@@ -305,15 +331,16 @@ def full_workflow(
         meetup_group_url: Meetup group URL
         discord_channel_id: Discord channel ID
         facebook_page_id: Facebook page ID
+        skip_platforms: Comma-separated platforms to skip
 
     Returns:
-        Combined results from both recipes
+        Combined results from both phases
     """
     print("\n" + "=" * 60)
     print("PHASE 1: Creating Events")
     print("=" * 60 + "\n")
 
-    create_result = create_event(
+    create_results = create_event(
         client=client,
         title=title,
         date=date,
@@ -321,15 +348,24 @@ def full_workflow(
         location=location,
         description=description,
         meetup_group_url=meetup_group_url,
+        skip_platforms=skip_platforms,
+        provider=provider,
     )
 
-    # Extract primary event URL for promotion
-    event_url = (
-        create_result.get("luma_url")
-        or create_result.get("meetup_url")
-        or create_result.get("partiful_url")
-        or ""
-    )
+    # Extract primary event URL for promotion (prefer luma > meetup > partiful)
+    event_url = ""
+    for platform in EVENT_PLATFORMS:
+        platform_result = create_results.get(platform, {})
+        if isinstance(platform_result, dict):
+            url = (
+                platform_result.get("event_url")
+                or platform_result.get(f"{platform}_url")
+                or platform_result.get("url")
+                or ""
+            )
+            if url:
+                event_url = url
+                break
 
     if not event_url:
         print("\nWarning: No event URL captured. Promotion will proceed without link.")
@@ -348,10 +384,11 @@ def full_workflow(
         event_url=event_url,
         discord_channel_id=discord_channel_id,
         facebook_page_id=facebook_page_id,
+        skip_platforms=skip_platforms,
     )
 
     return {
-        "event_creation": create_result,
+        "event_creation": create_results,
         "social_promotion": promote_result,
         "primary_event_url": event_url,
     }
@@ -374,7 +411,7 @@ Examples:
     --time "6:00 PM EST" \\
     --location "The Station, Philadelphia" \\
     --description "Join us for a hands-on workshop..." \\
-    --meetup-url "https://meetup.com/coffee-code-philly"
+    --meetup-url "https://www.meetup.com/code-coffee-philly"
 
   # Promote an existing event
   python recipe_client.py promote \\
@@ -392,7 +429,16 @@ Examples:
     --time "6:00 PM EST" \\
     --location "The Station, Philadelphia" \\
     --description "Join us..." \\
-    --meetup-url "https://meetup.com/coffee-code-philly"
+    --meetup-url "https://www.meetup.com/code-coffee-philly"
+
+  # Get recipe info
+  python recipe_client.py info --recipe all
+
+Recipes:
+  luma_create       rcp_mXyFyALaEsQF  Create event on Luma
+  meetup_create     rcp_kHJoI1WmR3AR  Create event on Meetup
+  partiful_create   rcp_bN7jRF5P_Kf0  Create event on Partiful
+  social_promotion  rcp_zBzqs2LO-miP  Promote event on social media
 
 Environment Variables:
   COMPOSIO_API_KEY    Your Composio API key (required)
@@ -413,8 +459,8 @@ Environment Variables:
     create_parser = subparsers.add_parser("create-event", help="Create event on platforms")
     add_common_args(create_parser)
     create_parser.add_argument("--meetup-url", default="", help="Meetup group URL")
-    create_parser.add_argument("--platforms", default="luma,meetup,partiful", help="Platforms to create on")
-    create_parser.add_argument("--skip", default="", help="Platforms to skip")
+    create_parser.add_argument("--skip", default="", help="Platforms to skip (e.g., 'meetup,partiful')")
+    create_parser.add_argument("--provider", choices=["hyperbrowser", "browser_tool"], default="hyperbrowser", help="Browser automation provider")
 
     # promote command
     promote_parser = subparsers.add_parser("promote", help="Promote event on social media")
@@ -430,10 +476,12 @@ Environment Variables:
     full_parser.add_argument("--meetup-url", default="", help="Meetup group URL")
     full_parser.add_argument("--discord-channel", default="", help="Discord channel ID")
     full_parser.add_argument("--facebook-page", default="", help="Facebook page ID")
+    full_parser.add_argument("--skip", default="", help="Platforms to skip")
+    full_parser.add_argument("--provider", choices=["hyperbrowser", "browser_tool"], default="hyperbrowser", help="Browser automation provider")
 
     # info command
     info_parser = subparsers.add_parser("info", help="Get recipe information")
-    info_parser.add_argument("--recipe", choices=["create", "promote", "all"], default="all")
+    info_parser.add_argument("--recipe", choices=["luma", "meetup", "partiful", "promote", "all"], default="all")
 
     args = parser.parse_args()
 
@@ -460,8 +508,8 @@ Environment Variables:
             location=args.location,
             description=args.description,
             meetup_group_url=args.meetup_url,
-            platforms=args.platforms,
             skip_platforms=args.skip,
+            provider=args.provider,
         )
     elif args.command == "promote":
         result = promote_event(
@@ -487,11 +535,19 @@ Environment Variables:
             meetup_group_url=args.meetup_url,
             discord_channel_id=args.discord_channel,
             facebook_page_id=args.facebook_page,
+            skip_platforms=args.skip,
+            provider=args.provider,
         )
     elif args.command == "info":
-        if args.recipe in ("create", "all"):
-            print("\n--- Create Event Recipe ---")
-            print(json.dumps(client.get_recipe_details(RECIPE_IDS["create_event"]), indent=2))
+        if args.recipe in ("luma", "all"):
+            print("\n--- Luma Create Event Recipe ---")
+            print(json.dumps(client.get_recipe_details(RECIPE_IDS["luma_create"]), indent=2))
+        if args.recipe in ("meetup", "all"):
+            print("\n--- Meetup Create Event Recipe ---")
+            print(json.dumps(client.get_recipe_details(RECIPE_IDS["meetup_create"]), indent=2))
+        if args.recipe in ("partiful", "all"):
+            print("\n--- Partiful Create Event Recipe ---")
+            print(json.dumps(client.get_recipe_details(RECIPE_IDS["partiful_create"]), indent=2))
         if args.recipe in ("promote", "all"):
             print("\n--- Social Promotion Recipe ---")
             print(json.dumps(client.get_recipe_details(RECIPE_IDS["social_promotion"]), indent=2))

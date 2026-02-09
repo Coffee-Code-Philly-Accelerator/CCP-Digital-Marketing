@@ -9,7 +9,7 @@ Automated event creation and social media promotion system for Coffee Code Phill
 ## Overview
 
 This system automates the entire event lifecycle:
-1. **Event Creation** - Simultaneously creates events on Luma, Meetup, and Partiful
+1. **Event Creation** - Sequentially creates events on Luma, Meetup, and Partiful via browser automation
 2. **Content Generation** - AI generates promotional images and platform-optimized descriptions
 3. **Social Promotion** - Posts to Twitter, LinkedIn, Instagram, Facebook, and Discord
 
@@ -24,10 +24,10 @@ flowchart TB
         C[LLM Description Optimization]
     end
 
-    subgraph Events["Event Platform Creation"]
-        D[Luma<br/>lu.ma/create]
-        E[Meetup<br/>meetup.com/.../events/create]
-        F[Partiful<br/>partiful.com/create]
+    subgraph Events["Event Platform Creation (Sequential)"]
+        D[Luma<br/>rcp_mXyFyALaEsQF]
+        E[Meetup<br/>rcp_kHJoI1WmR3AR]
+        F[Partiful<br/>rcp_bN7jRF5P_Kf0]
     end
 
     subgraph Social["Social Media Promotion"]
@@ -62,14 +62,16 @@ flowchart TB
 ```mermaid
 flowchart LR
     subgraph Rube["Rube MCP Platform"]
-        R1[Recipe: Create Event<br/>rcp_xvediVZu8BzW]
-        R2[Recipe: Social Promotion<br/>rcp_zBzqs2LO-miP]
+        R1[Recipe: Luma Create<br/>rcp_mXyFyALaEsQF]
+        R2[Recipe: Meetup Create<br/>rcp_kHJoI1WmR3AR]
+        R3[Recipe: Partiful Create<br/>rcp_bN7jRF5P_Kf0]
+        R4[Recipe: Social Promotion<br/>rcp_zBzqs2LO-miP]
     end
 
-    subgraph Browser["Browser Automation"]
-        BA[BROWSER_TOOL_NAVIGATE]
-        BB[BROWSER_TOOL_PERFORM_WEB_TASK]
-        BC[BROWSER_TOOL_SCREENSHOT]
+    subgraph Browser["Browser Automation (v2)"]
+        BA[BROWSER_TOOL_CREATE_TASK]
+        BB[BROWSER_TOOL_WATCH_TASK]
+        BC[BROWSER_TOOL_GET_SESSION]
     end
 
     subgraph APIs["Direct API Integrations"]
@@ -85,10 +87,10 @@ flowchart LR
         AI2[LLM invoke_llm]
     end
 
-    R1 --> Browser
-    R1 --> AI
-    R2 --> APIs
-    R2 --> AI
+    R1 & R2 & R3 --> Browser
+    R1 & R2 & R3 --> AI
+    R4 --> APIs
+    R4 --> AI
 ```
 
 ## Prerequisites
@@ -116,10 +118,14 @@ flowchart LR
 
 1. Open [Rube App](https://rube.app)
 2. Navigate to Recipes
-3. Find "Create Event on All Platforms" (`rcp_xvediVZu8BzW`)
-4. Fill in event details and run
-5. Copy event URLs from output
-6. Run "Event Social Promotion" (`rcp_zBzqs2LO-miP`) with the URLs
+3. Run per-platform event creation recipes:
+   - Luma: `rcp_mXyFyALaEsQF`
+   - Meetup: `rcp_kHJoI1WmR3AR`
+   - Partiful: `rcp_bN7jRF5P_Kf0`
+4. Fill in event details and run each recipe
+5. Poll `BROWSER_TOOL_WATCH_TASK` with the returned `task_id` until finished
+6. Copy event URLs from poll results
+7. Run "Event Social Promotion" (`rcp_zBzqs2LO-miP`) with the URLs
 
 ### Option 2: Via Claude Code with Rube MCP
 
@@ -131,64 +137,51 @@ at The Station, Philadelphia. Then promote it on all social platforms."
 
 ## Recipes
 
-### Recipe 1: Create Event on All Platforms
+### Recipe 1: Create Event on Luma
 
-**Recipe ID:** `rcp_xvediVZu8BzW`
-**Recipe URL:** [View on Rube](https://rube.app/recipes/fa1a7dd7-05d1-4155-803a-a2448f6fc1b2)
+**Recipe ID:** `rcp_mXyFyALaEsQF`
 
-Creates events on Luma, Meetup, and Partiful using browser automation with AI-generated content.
+Creates an event on Luma (lu.ma) using an AI browser agent.
+
+### Recipe 2: Create Event on Meetup
+
+**Recipe ID:** `rcp_kHJoI1WmR3AR`
+
+Creates an event on Meetup using an AI browser agent.
+
+### Recipe 3: Create Event on Partiful
+
+**Recipe ID:** `rcp_bN7jRF5P_Kf0`
+
+Creates an event on Partiful using an AI browser agent.
+
+#### Event Creation Sequence (all platforms)
 
 ```mermaid
 sequenceDiagram
-    participant U as User
+    participant U as User/Caller
     participant R as Recipe
-    participant G as Gemini AI
-    participant L as LLM
-    participant B as Browser
-    participant Lu as Luma
-    participant Me as Meetup
-    participant Pa as Partiful
+    participant B as Browser Agent
+    participant P as Platform
 
     U->>R: Event Details
-    R->>G: Generate promotional image
-    G-->>R: Image URL
-    R->>L: Generate platform descriptions
-    L-->>R: Optimized descriptions
+    R->>B: BROWSER_TOOL_CREATE_TASK<br/>(task description + startUrl)
+    B-->>R: task_id + session_id
+    R->>B: BROWSER_TOOL_GET_SESSION
+    B-->>R: live_url
+    R-->>U: {task_id, live_url, status: "running"}
 
-    rect rgb(240, 248, 255)
-        Note over R,Lu: Luma Creation
-        R->>B: Navigate to lu.ma/create
-        B->>Lu: Check login status
-        Lu-->>B: Page state
-        R->>B: Fill form with AI agent
-        B->>Lu: Submit event
-        Lu-->>R: Event URL
+    loop Poll every 10-15s (caller-side)
+        U->>B: BROWSER_TOOL_WATCH_TASK(task_id)
+        B-->>U: {status: "started"|"finished"|"stopped", current_url}
     end
 
-    rect rgb(255, 248, 240)
-        Note over R,Me: Meetup Creation
-        R->>B: Navigate to group/events/create
-        B->>Me: Check login status
-        Me-->>B: Page state
-        R->>B: Fill form with AI agent
-        B->>Me: Submit event
-        Me-->>R: Event URL
-    end
-
-    rect rgb(240, 255, 240)
-        Note over R,Pa: Partiful Creation
-        R->>B: Navigate to partiful.com/create
-        B->>Pa: Check login status
-        Pa-->>B: Page state
-        R->>B: Fill form with AI agent
-        B->>Pa: Submit event
-        Pa-->>R: Event URL
-    end
-
-    R-->>U: All Event URLs + Status
+    Note over B,P: Browser agent fills form and submits
+    B->>P: Submit event
+    P-->>B: Event page URL
 ```
 
-#### Input Parameters
+#### Input Parameters (all event creation recipes)
 
 | Parameter | Required | Description | Example |
 |-----------|----------|-------------|---------|
@@ -197,39 +190,27 @@ sequenceDiagram
 | `event_time` | Yes | Start time with timezone | "6:00 PM EST" |
 | `event_location` | Yes | Venue or address | "The Station, 3rd Floor, Philadelphia" |
 | `event_description` | Yes | Event description | "Join us for a hands-on workshop..." |
-| `meetup_group_url` | Yes | Your Meetup group URL | "https://meetup.com/coffee-code-philly" |
-| `platforms` | No | Platforms to create on | "luma,meetup,partiful" (default: all) |
-| `skip_platforms` | No | Platforms to skip | "meetup" (if auth issues) |
 
-#### Output
+#### Output (Phase 1 - immediate return)
 
 ```json
 {
-  "luma_url": "https://lu.ma/abc123",
-  "meetup_url": "https://meetup.com/coffee-code-philly/events/12345",
-  "partiful_url": "https://partiful.com/e/xyz789",
-  "image_url": "https://storage.googleapis.com/...",
-  "status_summary": "Luma: PUBLISHED | Meetup: PUBLISHED | Partiful: PUBLISHED",
-  "needs_auth": "none"
+  "platform": "luma|meetup|partiful",
+  "status": "running",
+  "task_id": "<use for BROWSER_TOOL_WATCH_TASK>",
+  "session_id": "<browser session>",
+  "live_url": "https://...",
+  "event_url": "",
+  "error": null
 }
 ```
 
-#### Status Codes
-
-| Status | Meaning | Action Required |
-|--------|---------|-----------------|
-| `PUBLISHED` | Event created successfully | None |
-| `NEEDS_AUTH` | Login or 2FA required | Log in manually, re-run |
-| `NEEDS_REVIEW` | Uncertain if published | Check platform manually |
-| `FAILED` | Error occurred | Check error message |
-| `SKIPPED` | Platform skipped | Intentional (skip_platforms) |
-
 ---
 
-### Recipe 2: Event Social Promotion
+### Recipe 4: Event Social Promotion
 
 **Recipe ID:** `rcp_zBzqs2LO-miP`
-**Recipe URL:** [View on Rube](https://rube.app/recipes/...)
+**Recipe URL:** [View on Rube](https://rube.app)
 
 Posts event announcements to 5 social platforms with AI-generated content.
 
@@ -288,13 +269,13 @@ sequenceDiagram
 
 ```json
 {
-  "twitter_posted": "success",
-  "linkedin_posted": "success",
-  "instagram_posted": "success",
-  "facebook_posted": "success",
-  "discord_posted": "success",
-  "image_url": "https://storage.googleapis.com/...",
-  "summary": "Posted to 5/5 platforms"
+  "twitter_posted": "success|skipped|failed: <error>",
+  "linkedin_posted": "success|skipped|failed: <error>",
+  "instagram_posted": "success|skipped: No image available|failed: <error>",
+  "facebook_posted": "success|skipped: No page ID provided|failed: <error>",
+  "discord_posted": "success|skipped: No channel ID provided|failed: <error>",
+  "image_url": "https://...",
+  "summary": "Posted to N/5 platforms"
 }
 ```
 
@@ -302,22 +283,21 @@ sequenceDiagram
 
 ## Combined Workflow
 
-For a complete event launch, run both recipes in sequence:
+For a complete event launch, run event creation recipes sequentially, then social promotion:
 
 ```mermaid
 flowchart TD
-    subgraph Phase1["Phase 1: Event Creation"]
-        A[User provides event details] --> B[Recipe: Create Event on All Platforms]
-        B --> C{Events Created?}
-        C -->|Yes| D[Luma URL]
-        C -->|Yes| E[Meetup URL]
-        C -->|Yes| F[Partiful URL]
-        C -->|Auth Required| G[Manual Login Required]
-        G --> B
+    subgraph Phase1["Phase 1: Event Creation (Sequential)"]
+        A[User provides event details] --> B[Luma Recipe<br/>rcp_mXyFyALaEsQF]
+        B --> C[Poll WATCH_TASK until done]
+        C --> D[Meetup Recipe<br/>rcp_kHJoI1WmR3AR]
+        D --> E[Poll WATCH_TASK until done]
+        E --> F[Partiful Recipe<br/>rcp_bN7jRF5P_Kf0]
+        F --> G[Poll WATCH_TASK until done]
     end
 
     subgraph Phase2["Phase 2: Social Promotion"]
-        D & E & F --> H[Recipe: Event Social Promotion]
+        G --> H[Recipe: Event Social Promotion<br/>rcp_zBzqs2LO-miP]
         H --> I[Twitter Post]
         H --> J[LinkedIn Post]
         H --> K[Instagram Post]
@@ -349,19 +329,14 @@ Current integration status for each platform:
 
 ```mermaid
 flowchart TD
-    A[Navigate to Platform] --> B{Already Logged In?}
-    B -->|Yes| C[Proceed to Form]
-    B -->|No| D[Detect Login Page]
-    D --> E{2FA Required?}
-    E -->|No| F[Auto-login if credentials stored]
-    E -->|Yes| G[PAUSE: Request 2FA Code]
-    G --> H[User Enters Code]
-    H --> I[Complete Login]
+    A[Browser Agent Starts Task] --> B{Already Logged In?}
+    B -->|Yes| C[Fill Form with AI Agent]
+    B -->|No| D[Task fails / navigates to login]
+    D --> E[User authenticates via Composio]
+    E --> F[Re-run recipe]
     F --> C
-    I --> C
-    C --> J[Fill Form with AI Agent]
-    J --> K[Submit/Publish]
-    K --> L[Capture Event URL]
+    C --> G[Submit/Publish]
+    G --> H[Capture Event URL via WATCH_TASK polling]
 ```
 
 ## Troubleshooting
@@ -378,13 +353,26 @@ See [docs/troubleshooting.md](docs/troubleshooting.md) for common issues:
 ```
 CCP-Digital-Marketing/
 ├── README.md                    # This file
+├── CLAUDE.md                    # Claude Code guidance
 ├── docs/
 │   ├── event-creation.md        # Detailed event creation docs
 │   ├── social-promotion.md      # Detailed social promotion docs
 │   └── troubleshooting.md       # Common issues & solutions
 ├── recipes/
-│   ├── create_event.py          # Event creation recipe code
-│   └── social_promotion.py      # Social promotion recipe code
+│   ├── luma_create_event.py     # Luma event creation recipe
+│   ├── meetup_create_event.py   # Meetup event creation recipe
+│   ├── partiful_create_event.py # Partiful event creation recipe
+│   └── social_promotion.py      # Social promotion recipe
+├── scripts/
+│   ├── recipe_client.py         # CLI client for recipe execution
+│   ├── requirements.txt         # Python dependencies
+│   └── .env.example             # Environment variable template
+├── .claude/skills/
+│   ├── luma-create/             # Luma event creation skill
+│   ├── meetup-create/           # Meetup event creation skill
+│   ├── partiful-create/         # Partiful event creation skill
+│   ├── social-promote/          # Social promotion skill
+│   └── full-workflow/           # Full workflow orchestration skill
 └── .gitignore
 ```
 

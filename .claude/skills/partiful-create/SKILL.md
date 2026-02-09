@@ -18,13 +18,19 @@ This skill is triggered when the user wants to:
 | `event_date` | string | Date in natural language, e.g., "January 25, 2025" |
 | `event_time` | string | Time with timezone, e.g., "6:00 PM EST" |
 | `event_location` | string | Venue name or address |
-| `event_description` | string | Full event description (max 5000 chars) |
+| `event_description` | string | Full event description (apostrophes are auto-converted to curly quotes) |
 
 **Note**: Recurring events are NOT supported on Partiful.
 
-## Execution
+## Optional Inputs
 
-Use the Rube MCP tool to execute the Partiful event creation recipe:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `partiful_create_url` | string | `https://partiful.com/create` | Override the Partiful create page URL |
+
+## Execution (Two-Phase)
+
+### Phase 1: Start the browser task
 
 ```
 RUBE_EXECUTE_RECIPE(
@@ -39,38 +45,65 @@ RUBE_EXECUTE_RECIPE(
 )
 ```
 
-## Output
+This returns immediately with `task_id`, `live_url`, `provider`, and `poll_tool`. Share the `live_url` with the user so they can watch the browser.
 
-The recipe returns:
+### Phase 2: Poll for completion
+
+After the recipe returns, read the `provider` and `poll_tool` fields from the Phase 1 output to determine which polling tool and status values to use.
+
+**If `provider` is `"hyperbrowser"`:**
+
+```
+RUBE_MULTI_EXECUTE_TOOL(
+    tool_slug="HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS",
+    arguments={"task_id": "<task_id from Phase 1>"}
+)
+```
+
+Check the response:
+- `status: "completed"` → done, check result for event URL
+- `status: "running"` → still running, poll again in 10-15 seconds
+- `status: "failed"` → task failed, report error
+
+**If `provider` is `"browser_tool"`:**
+
+```
+RUBE_MULTI_EXECUTE_TOOL(
+    tool_slug="BROWSER_TOOL_WATCH_TASK",
+    arguments={"taskId": "<task_id from Phase 1>"}
+)
+```
+
+Check the response:
+- `status: "finished"` → check `current_url` against success pattern
+- `status: "started"` → still running, poll again in 10-15 seconds
+- `status: "stopped"` → task was aborted, report failure
+
+**Success URL pattern**: URL contains `partiful.com/e/`
+
+## Output (Phase 1)
 
 ```json
 {
   "platform": "partiful",
-  "status": "done|needs_review|failed",
-  "event_url": "https://partiful.com/e/abc123",
-  "image_url": "",
+  "status": "running",
+  "task_id": "<use for polling>",
+  "session_id": "<browser session>",
+  "live_url": "https://...",
+  "event_url": "",
   "error": null,
-  "live_url": "https://..."
+  "provider": "hyperbrowser",
+  "poll_tool": "HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS",
+  "poll_args_key": "task_id",
+  "success_url_pattern": "partiful.com/e/"
 }
 ```
 
-## Status Handling
-
-| Status | Meaning | Action |
-|--------|---------|--------|
-| `done` | Event created successfully | Report event_url to user |
-| `needs_review` | Task finished but URL not confirmed | Ask user to check Partiful manually |
-| `failed` | Browser task error or timeout | Report error, suggest re-running |
-
-## Live Browser Watching
-
-The `live_url` field (when available) provides a real-time view of the browser automation. Share this with the user so they can watch the event being created.
-
 ## Platform Notes
 
-- **Architecture**: Uses `BROWSER_TOOL_CREATE_TASK` - a single AI browser agent call that autonomously fills the form (replaces the old multi-step state machine)
-- **Share Modal**: Partiful shows a share/invite modal after event creation. The browser agent automatically dismisses it before extracting the event URL.
+- **Architecture**: Fire-and-forget recipe + caller-side polling (avoids 4-min Rube timeout)
+- **Browser Provider**: Defaults to Hyperbrowser with persistent profiles for saved auth. Falls back to Composio browser_tool if configured. Requires auth-setup skill to be run first for Hyperbrowser.
+- **Share Modal**: Partiful shows a share/invite modal after creation. The browser agent dismisses it.
 - **No Recurring Events**: Partiful does not support recurring events.
-- **Create URL**: https://partiful.com/create
-- **Success URL Pattern**: `partiful.com/e/`
-- **Session Expiry**: If the Composio browser session is expired, re-authenticate via Composio connected accounts and re-run
+- **Apostrophes**: Automatically converted to curly quotes (\u2019) to avoid Rube env var injection issues. No manual workaround needed.
+- **Session Expiry**: If using Hyperbrowser, re-run auth-setup skill with existing profile_id. If using browser_tool, re-authenticate via Composio connected accounts.

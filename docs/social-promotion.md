@@ -46,9 +46,9 @@ flowchart TB
     subgraph Posting["Step 4: Parallel Posting"]
         G[Twitter: TWITTER_CREATION_OF_A_POST]
         H[LinkedIn: LINKEDIN_CREATE_POST]
-        I[Instagram: INSTAGRAM_MEDIA_POST_MEDIA]
-        J[Facebook: FACEBOOK_CREATE_PAGE_POST]
-        K[Discord: DISCORD_SEND_MESSAGE]
+        I[Instagram: INSTAGRAM_CREATE_POST]
+        J[Facebook: FACEBOOK_CREATE_POST]
+        K[Discord: DISCORDBOT_CREATE_MESSAGE]
     end
 
     subgraph Output["Step 5: Results"]
@@ -140,7 +140,7 @@ RSVP: https://lu.ma/abc123
 ### LinkedIn
 
 **API Tools:**
-1. `LINKEDIN_GET_CURRENT_USER_PROFILE` - Get user URN
+1. `LINKEDIN_GET_MY_INFO` - Get user URN
 2. `LINKEDIN_CREATE_LINKED_IN_POST` - Create post
 
 **Content Format:**
@@ -159,15 +159,17 @@ Register here: {event_url}
 **Auto-Discovery:**
 The recipe automatically discovers your LinkedIn URN:
 ```python
-profile = LINKEDIN_GET_CURRENT_USER_PROFILE()
+profile = LINKEDIN_GET_MY_INFO()
 urn = f"urn:li:person:{profile['sub']}"
 ```
 
 ### Instagram
 
 **API Tools:**
-1. `INSTAGRAM_USERS_GET_LOGGED_IN_USER_INFO` - Get user ID
-2. `INSTAGRAM_MEDIA_POST_MEDIA` - Post image
+1. `INSTAGRAM_GET_USER_INFO` - Get user ID
+2. `INSTAGRAM_CREATE_MEDIA_CONTAINER` - Create media container
+3. `INSTAGRAM_GET_POST_STATUS` - Poll container status
+4. `INSTAGRAM_CREATE_POST` - Publish container
 
 **Requirements:**
 - Must have a Business or Creator account
@@ -190,7 +192,7 @@ Link in bio or DM for details!
 
 ### Facebook
 
-**API Tool:** `FACEBOOK_CREATE_PAGE_POST`
+**API Tool:** `FACEBOOK_CREATE_POST`
 
 **Requirements:**
 - Must have a Facebook Page (not personal profile)
@@ -211,7 +213,7 @@ RSVP: {event_url}
 
 ### Discord
 
-**API Tool:** `DISCORD_SEND_MESSAGE`
+**API Tool:** `DISCORDBOT_CREATE_MESSAGE`
 
 **Requirements:**
 - Bot must be added to server

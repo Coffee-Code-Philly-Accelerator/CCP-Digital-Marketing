@@ -2,42 +2,84 @@
 RECIPE: Create Event on Partiful
 RECIPE ID: rcp_bN7jRF5P_Kf0
 
-FLOW: Input → BROWSER_TOOL_CREATE_TASK → WatchTask → Event URL
+FLOW: Input → Provider dispatch (Hyperbrowser or BROWSER_TOOL) → GET_SESSION → Return task_id + live_url
 
 VERSION HISTORY:
-v2 (current): Rewritten to use BROWSER_TOOL_CREATE_TASK - single AI browser agent call
+v4 (current): Hyperbrowser migration - dual provider support with persistent auth profiles.
+v3: Fire-and-forget pattern - starts task, returns immediately. Caller polls via BROWSER_TOOL_WATCH_TASK.
+v2: Added polling loop but still exceeded 4-min Rube timeout
 v1: State machine with BROWSER_TOOL_NAVIGATE/PERFORM_WEB_TASK/FETCH_WEBPAGE (timed out due to ~10 sequential calls)
 
 API LEARNINGS:
-- BROWSER_TOOL_CREATE_TASK: AI agent autonomously handles multi-step browser workflows
-- BROWSER_TOOL_WATCH_TASK: Poll for task completion, returns status/output/current_url
-- BROWSER_TOOL_GET_SESSION: Get liveUrl to watch browser in real-time
+- HYPERBROWSER_START_BROWSER_USE_TASK: Returns {jobId, sessionId}, uses persistent profile for auth
+- HYPERBROWSER_GET_SESSION_DETAILS: Returns {liveUrl} for real-time browser watching
+- HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS: Poll with task_id for status (replaces BROWSER_TOOL_WATCH_TASK)
+- BROWSER_TOOL_CREATE_TASK: Returns {watch_task_id, browser_session_id} (not taskId/sessionId)
+- BROWSER_TOOL_GET_SESSION: Returns {liveUrl} for real-time browser watching
+- BROWSER_TOOL_WATCH_TASK: Poll with taskId for status/output/current_url (caller responsibility)
+- Rube timeout is 4 minutes; polling loops exceed this, so recipe returns immediately
 - Partiful create URL: https://partiful.com/create
 - Partiful shows share/invite modal after creation - must be dismissed
 - Partiful does NOT support recurring events
 - Success URL pattern: partiful.com/e/
+- Input strings with apostrophes cause SyntaxError in Rube env var injection
 
 KNOWN ISSUES:
-- Session expiry requires re-login via Composio connected accounts
+- Session expiry requires re-login via Composio connected accounts (browser_tool) or profile re-auth (hyperbrowser)
 - 2FA cannot be automated
 - Share modal must be dismissed to reach the event page
 """
 
 import os
-import time
 from datetime import datetime
+
+
+def sanitize_input(text, max_len=2000):
+    """Sanitize user input for safe inclusion in browser task descriptions."""
+    if not text:
+        return ""
+    text = str(text)
+    text = ''.join(char for char in text if char >= ' ' or char in '\n\t')
+    text = text.replace("```", "'''")
+    text = text.replace("---", "___")
+    text = text.replace("'", "\u2019")  # curly apostrophe avoids Rube SyntaxError
+    return text[:max_len]
+
+
+try:
+    run_composio_tool
+except NameError:
+    def run_composio_tool(tool_name, arguments):
+        """Mock implementation for local testing"""
+        print(f"[MOCK] run_composio_tool({tool_name}, {arguments})")
+        if tool_name == "BROWSER_TOOL_CREATE_TASK":
+            return {"data": {"watch_task_id": "mock_task_123", "browser_session_id": "mock_session_456"}}, None
+        if tool_name == "BROWSER_TOOL_GET_SESSION":
+            return {"data": {"liveUrl": "https://mock-live-url.example.com"}}, None
+        if tool_name == "HYPERBROWSER_START_BROWSER_USE_TASK":
+            return {"data": {"jobId": "mock_hb_task_123", "sessionId": "mock_hb_session_456"}}, None
+        if tool_name == "HYPERBROWSER_GET_SESSION_DETAILS":
+            return {"data": {"liveUrl": "https://mock-hb-live-url.example.com"}}, None
+        return {"data": {}}, None
+
 
 print(f"[{datetime.utcnow().isoformat()}] Starting Partiful event creation")
 
-# Inputs
-event_title = os.environ.get("event_title", "")
-event_date = os.environ.get("event_date", "")
-event_time = os.environ.get("event_time", "")
-event_location = os.environ.get("event_location", "")
-event_description = os.environ.get("event_description", "")
+event_title = sanitize_input(os.environ.get("event_title"), max_len=200)
+event_date = sanitize_input(os.environ.get("event_date"), max_len=100)
+event_time = sanitize_input(os.environ.get("event_time"), max_len=100)
+event_location = sanitize_input(os.environ.get("event_location"), max_len=500)
+event_description = sanitize_input(os.environ.get("event_description"), max_len=5000)
+partiful_create_url = os.environ.get("partiful_create_url", "https://partiful.com/create")
 
 if not all([event_title, event_date, event_time, event_location, event_description]):
     raise ValueError("Missing required inputs: event_title, event_date, event_time, event_location, event_description")
+
+browser_provider = os.environ.get("CCP_BROWSER_PROVIDER", "hyperbrowser").lower()
+profile_id = os.environ.get("CCP_PARTIFUL_PROFILE_ID", "")
+hb_llm = os.environ.get("CCP_HYPERBROWSER_LLM", "claude-sonnet-4-20250514")
+hb_max_steps = int(os.environ.get("CCP_HYPERBROWSER_MAX_STEPS", "25"))
+hb_stealth = os.environ.get("CCP_HYPERBROWSER_USE_STEALTH", "true").lower() == "true"
 
 
 def extract_data(result):
@@ -49,7 +91,6 @@ def extract_data(result):
     return data if isinstance(data, dict) else {}
 
 
-# Step 1: Create browser automation task
 task_description = f"""Create a new event on Partiful with these exact details:
 
 1. Find the event title field (may say 'Untitled Event' or similar), click it, clear any existing text, and type: {event_title}
@@ -63,82 +104,73 @@ task_description = f"""Create a new event on Partiful with these exact details:
 
 IMPORTANT: After publishing, the URL should change to partiful.com/e/something. If a share modal blocks the view, dismiss it first."""
 
-print(f"[{datetime.utcnow().isoformat()}] Creating browser task...")
-task_result, task_error = run_composio_tool("BROWSER_TOOL_CREATE_TASK", {
-    "task": task_description,
-    "startUrl": "https://partiful.com/create"
-})
+print(f"[{datetime.utcnow().isoformat()}] Creating browser task (provider: {browser_provider})...")
+
+if browser_provider == "hyperbrowser":
+    full_task = f"Navigate to {partiful_create_url} and then:\n\n" + task_description
+    session_options = {"useStealth": hb_stealth, "acceptCookies": True}
+    if profile_id:
+        session_options["profile"] = {"id": profile_id, "persistChanges": True}
+    task_result, task_error = run_composio_tool("HYPERBROWSER_START_BROWSER_USE_TASK", {
+        "task": full_task,
+        "sessionOptions": session_options,
+        "llm": hb_llm,
+        "maxSteps": hb_max_steps,
+        "useVision": True,
+    })
+else:
+    task_result, task_error = run_composio_tool("BROWSER_TOOL_CREATE_TASK", {
+        "task": task_description,
+        "startUrl": partiful_create_url,
+    })
 
 if task_error:
     raise Exception(f"Failed to create browser task: {task_error}")
 
 task_data = extract_data(task_result)
-task_id = task_data.get("taskId", "")
-session_id = task_data.get("sessionId", task_data.get("browser_session_id", ""))
+
+if browser_provider == "hyperbrowser":
+    task_id = task_data.get("jobId", task_data.get("taskId", ""))
+    session_id = task_data.get("sessionId", "")
+else:
+    task_id = task_data.get("taskId", task_data.get("watch_task_id", ""))
+    session_id = task_data.get("sessionId", task_data.get("browser_session_id", ""))
 
 if not task_id:
-    raise Exception(f"No taskId returned. Full response: {task_data}")
+    raise Exception(f"No task ID returned. Full response: {task_data}")
 
 print(f"[{datetime.utcnow().isoformat()}] Task created: {task_id}, session: {session_id}")
 
-# Step 2: Get live URL for user to watch
 live_url = ""
 if session_id:
-    session_result, _ = run_composio_tool("BROWSER_TOOL_GET_SESSION", {"sessionId": session_id})
+    if browser_provider == "hyperbrowser" and session_id:
+        session_result, _ = run_composio_tool("HYPERBROWSER_GET_SESSION_DETAILS", {"id": session_id})
+    else:
+        session_result, _ = run_composio_tool("BROWSER_TOOL_GET_SESSION", {"sessionId": session_id})
     if session_result:
         session_data = extract_data(session_result)
         live_url = session_data.get("liveUrl", "")
         if live_url:
             print(f"[{datetime.utcnow().isoformat()}] Watch live: {live_url}")
 
-# Step 3: Poll for completion (5s intervals, up to 3 minutes)
-event_url = ""
-status = "failed"
-error_msg = None
+poll_tool = "HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS" if browser_provider == "hyperbrowser" else "BROWSER_TOOL_WATCH_TASK"
+poll_args_key = "task_id" if browser_provider == "hyperbrowser" else "taskId"
 
-for i in range(36):
-    time.sleep(5)
-    watch_result, watch_error = run_composio_tool("BROWSER_TOOL_WATCH_TASK", {"taskId": task_id})
-    if watch_error:
-        print(f"[{datetime.utcnow().isoformat()}] Watch error: {watch_error}")
-        continue
-
-    watch_data = extract_data(watch_result)
-    task_status = watch_data.get("status", "")
-    current_url = watch_data.get("current_url", "")
-
-    print(f"[{datetime.utcnow().isoformat()}] Poll {i+1}: status={task_status}, url={current_url}")
-
-    if task_status == "finished":
-        is_success = watch_data.get("is_success", False)
-        # Check success URL pattern: partiful.com/e/
-        if current_url and "partiful.com/e/" in current_url.lower():
-            event_url = current_url
-            status = "done"
-        elif is_success:
-            event_url = current_url or ""
-            status = "done"
-        else:
-            status = "needs_review"
-            error_msg = watch_data.get("output", "Task finished but could not confirm event creation")
-        break
-    elif task_status == "stopped":
-        status = "failed"
-        error_msg = "Browser task was stopped"
-        break
-
-if status == "failed" and not error_msg:
-    error_msg = "Timed out waiting for browser task to complete"
-
+# Return immediately - caller is responsible for polling
 output = {
     "platform": "partiful",
-    "status": status,
-    "event_url": event_url,
-    "image_url": "",
-    "error": error_msg,
+    "status": "running",
+    "task_id": task_id,
+    "session_id": session_id,
     "live_url": live_url,
+    "event_url": "",
+    "error": None,
+    "success_url_pattern": "partiful.com/e/",
+    "provider": browser_provider,
+    "poll_tool": poll_tool,
+    "poll_args_key": poll_args_key,
 }
 
-print(f"[{datetime.utcnow().isoformat()}] Complete: status={status}, event_url={event_url}")
+print(f"[{datetime.utcnow().isoformat()}] Task started. Caller should poll {poll_tool} with {poll_args_key}={task_id}")
 
 output

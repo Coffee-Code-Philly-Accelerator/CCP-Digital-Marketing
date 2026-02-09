@@ -1,14 +1,16 @@
-# Event Creation Recipe - Detailed Documentation
+# Event Creation Recipes - Detailed Documentation
 
-**Recipe ID:** `rcp_xvediVZu8BzW`
-**Recipe URL:** [https://rube.app/recipes/fa1a7dd7-05d1-4155-803a-a2448f6fc1b2](https://rube.app/recipes/fa1a7dd7-05d1-4155-803a-a2448f6fc1b2)
+## Per-Platform Recipes
+
+| Platform | Recipe ID | Create URL |
+|----------|-----------|------------|
+| Luma | `rcp_mXyFyALaEsQF` | `https://lu.ma/create` |
+| Meetup | `rcp_kHJoI1WmR3AR` | `https://www.meetup.com/<group>/events/create/` |
+| Partiful | `rcp_bN7jRF5P_Kf0` | `https://partiful.com/create` |
 
 ## Overview
 
-This recipe creates events on three platforms simultaneously using browser automation:
-- **Luma** (lu.ma) - Professional event hosting
-- **Meetup** (meetup.com) - Community event platform
-- **Partiful** (partiful.com) - Social event invitations
+Each recipe creates an event on a single platform using browser automation. Recipes are designed to be run sequentially (one platform at a time) since browser automation sessions cannot overlap. Each recipe uses the fire-and-forget pattern: it starts an AI browser agent via `BROWSER_TOOL_CREATE_TASK` and returns immediately with a `task_id` for caller-side polling.
 
 ## Why Browser Automation?
 
@@ -30,40 +32,33 @@ flowchart TB
         C[event_time]
         D[event_location]
         E[event_description]
-        F[meetup_group_url]
     end
 
-    subgraph AI["Step 2: AI Content Generation"]
-        G[GEMINI_GENERATE_IMAGE<br/>Creates promotional graphic]
-        H[invoke_llm<br/>Generates platform descriptions]
+    subgraph Browser["Step 2: Fire-and-Forget Browser Task"]
+        F[BROWSER_TOOL_CREATE_TASK<br/>Launches AI browser agent]
+        G[BROWSER_TOOL_GET_SESSION<br/>Gets live_url for watching]
     end
 
-    subgraph Browser["Step 3: Browser Automation"]
-        I[BROWSER_TOOL_NAVIGATE]
-        J[Auth Check]
-        K[BROWSER_TOOL_PERFORM_WEB_TASK]
-        L[URL Extraction]
+    subgraph Polling["Step 3: Caller-Side Polling"]
+        H[BROWSER_TOOL_WATCH_TASK<br/>Poll every 10-15s]
+        I{status?}
+        J[started - still running]
+        K[finished - check current_url]
+        L[stopped - task aborted]
     end
 
-    subgraph Platforms["Target Platforms"]
-        M[Luma]
-        N[Meetup]
-        O[Partiful]
-    end
-
-    A & B & C & D & E & F --> G
-    A & B & C & D & E & F --> H
-    G & H --> I
-    I --> J
-    J -->|Logged In| K
-    J -->|Not Logged In| P[NEEDS_AUTH]
-    K --> L
-    L --> M & N & O
+    A & B & C & D & E --> F
+    F --> G
+    G --> H
+    H --> I
+    I --> J --> H
+    I --> K
+    I --> L
 ```
 
 ## Input Parameters
 
-### Required Parameters
+### Required Parameters (all platforms)
 
 | Parameter | Type | Description | Example |
 |-----------|------|-------------|---------|
@@ -71,78 +66,106 @@ flowchart TB
 | `event_date` | string | Date in natural language | "January 25, 2025" or "Next Saturday" |
 | `event_time` | string | Time with timezone | "6:00 PM EST" or "18:00 Eastern" |
 | `event_location` | string | Venue name or full address | "The Station, 3rd Floor, 1500 Sansom St, Philadelphia, PA" |
-| `event_description` | string | Full event description | "Join us for a hands-on workshop where we'll explore..." |
-| `meetup_group_url` | string | Your Meetup group's URL | "https://www.meetup.com/coffee-code-philly" |
+| `event_description` | string | Full event description (apostrophes auto-converted to curly quotes) | "Join us for a hands-on workshop where we'll explore..." |
 
-### Optional Parameters
+### Optional Parameters (platform-specific)
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `platforms` | string | "luma,meetup,partiful" | Comma-separated list of platforms to create on |
-| `skip_platforms` | string | "" | Platforms to skip (useful if one has auth issues) |
+| Parameter | Platform | Default | Description |
+|-----------|----------|---------|-------------|
+| `luma_create_url` | Luma | `https://lu.ma/create` | Override the Luma create page URL |
+| `meetup_group_url` | Meetup | `https://www.meetup.com/code-coffee-philly` | Override the Meetup group URL |
+| `partiful_create_url` | Partiful | `https://partiful.com/create` | Override the Partiful create page URL |
 
 ## Output Format
 
+Each recipe returns immediately with:
+
 ```json
 {
-  "luma_url": "https://lu.ma/abc123def",
-  "meetup_url": "https://www.meetup.com/coffee-code-philly/events/123456789",
-  "partiful_url": "https://partiful.com/e/xyz789abc",
-  "image_url": "https://storage.googleapis.com/gemini-generated/image123.png",
-  "status_summary": "Luma: PUBLISHED | Meetup: PUBLISHED | Partiful: PUBLISHED",
-  "needs_auth": "none"
+  "platform": "luma|meetup|partiful",
+  "status": "running",
+  "task_id": "<use for BROWSER_TOOL_WATCH_TASK>",
+  "session_id": "<browser session>",
+  "live_url": "https://...",
+  "event_url": "",
+  "error": null,
+  "success_url_pattern": "<platform-specific pattern>"
 }
 ```
 
-## Status Codes Explained
+### Polling Response (via BROWSER_TOOL_WATCH_TASK)
 
-### PUBLISHED
-Event was successfully created and is live on the platform.
+| Field | Description |
+|-------|-------------|
+| `status` | `"started"` (still running), `"finished"` (done), `"stopped"` (aborted) |
+| `current_url` | The browser's current URL - check against success pattern |
+| `is_success` | Boolean indicating if task completed successfully |
+| `output` | Task output text |
 
-```mermaid
-flowchart LR
-    A[Navigate] --> B[Logged In] --> C[Fill Form] --> D[Submit] --> E[PUBLISHED]
+### Success URL Patterns
+
+| Platform | Success Pattern |
+|----------|----------------|
+| Luma | URL contains `lu.ma/` but NOT `/create` or `/home` |
+| Meetup | URL contains `meetup.com` and `/events/` but NOT `/create` |
+| Partiful | URL contains `partiful.com/e/` |
+
+## Example Usage
+
+### Create Event on Luma
+
+```python
+# Phase 1: Start the task
+RUBE_EXECUTE_RECIPE(
+    recipe_id="rcp_mXyFyALaEsQF",
+    input_data={
+        "event_title": "AI Workshop: Building with Claude",
+        "event_date": "January 25, 2025",
+        "event_time": "6:00 PM EST",
+        "event_location": "The Station, Philadelphia",
+        "event_description": "Join us for a hands-on workshop..."
+    }
+)
+# Returns: {task_id, live_url, status: "running"}
+
+# Phase 2: Poll for completion
+RUBE_MULTI_EXECUTE_TOOL(
+    tool_slug="BROWSER_TOOL_WATCH_TASK",
+    arguments={"taskId": "<task_id from Phase 1>"}
+)
+# Returns: {status: "started"|"finished"|"stopped", current_url: "..."}
 ```
 
-### NEEDS_AUTH
-The browser session is not logged into the platform. Manual intervention required.
+### Create Event on Meetup
 
-```mermaid
-flowchart LR
-    A[Navigate] --> B[Login Page Detected] --> C[NEEDS_AUTH]
-    C --> D[User logs in manually]
-    D --> E[Re-run recipe]
+```python
+RUBE_EXECUTE_RECIPE(
+    recipe_id="rcp_kHJoI1WmR3AR",
+    input_data={
+        "event_title": "AI Workshop: Building with Claude",
+        "event_date": "January 25, 2025",
+        "event_time": "6:00 PM EST",
+        "event_location": "The Station, Philadelphia",
+        "event_description": "Join us for a hands-on workshop...",
+        "meetup_group_url": "https://www.meetup.com/code-coffee-philly"
+    }
+)
 ```
 
-**Resolution:**
-1. Open the platform in your browser
-2. Log in to your account
-3. Re-run the recipe
+### Create Event on Partiful
 
-### NEEDS_REVIEW
-The form was submitted but we couldn't confirm the event was published.
-
-```mermaid
-flowchart LR
-    A[Form Submitted] --> B[No Event URL Detected] --> C[NEEDS_REVIEW]
-    C --> D[Check platform manually]
+```python
+RUBE_EXECUTE_RECIPE(
+    recipe_id="rcp_bN7jRF5P_Kf0",
+    input_data={
+        "event_title": "AI Workshop: Building with Claude",
+        "event_date": "January 25, 2025",
+        "event_time": "6:00 PM EST",
+        "event_location": "The Station, Philadelphia",
+        "event_description": "Join us for a hands-on workshop..."
+    }
+)
 ```
-
-**Resolution:**
-1. Check the platform manually
-2. Look for draft/pending events
-3. Publish manually if needed
-
-### FAILED
-An error occurred during the process.
-
-**Common causes:**
-- Platform UI changed (form elements not found)
-- Network timeout
-- Browser session crashed
-
-### SKIPPED
-Platform was intentionally skipped via `skip_platforms` parameter.
 
 ## Platform-Specific Details
 
@@ -164,12 +187,12 @@ Platform was intentionally skipped via `skip_platforms` parameter.
 
 **Known Quirks:**
 - React-based UI with dynamic elements
-- Date picker requires specific interaction pattern
+- Date picker requires specific interaction pattern - task instructions include explicit 2s waits
 - Cover image upload needs URL (not file upload)
 
 ### Meetup
 
-**Create URL:** `https://www.meetup.com/[your-group]/events/create/`
+**Create URL:** `https://www.meetup.com/<group>/events/create/`
 
 **Login Methods:**
 - Email/Password
@@ -187,9 +210,11 @@ Platform was intentionally skipped via `skip_platforms` parameter.
 
 **Known Quirks:**
 - Complex multi-step form
+- Aggressive anti-bot detection - task instructions include 2s waits between form actions
 - Venue search can be slow
 - Rich text editor has specific formatting
 - Must be an organizer of the group
+- Group URL defaults to `https://www.meetup.com/code-coffee-philly`, overridable via `meetup_group_url`
 
 ### Partiful
 
@@ -212,135 +237,32 @@ Platform was intentionally skipped via `skip_platforms` parameter.
 - Emoji-friendly platform
 - Theme/Effect customization available
 - Guest capacity settings
-
-## AI Content Generation
-
-### Image Generation
-
-Uses Gemini Imagen to create promotional graphics:
-
-```python
-prompt = f"""
-Create a modern, eye-catching event promotional graphic for: {event_title}.
-Style: professional, vibrant colors, suitable for social media.
-Include visual elements suggesting: {event_location}.
-Do not include any text in the image.
-"""
-```
-
-### Description Optimization
-
-Uses LLM to create platform-specific descriptions:
-
-```python
-prompt = f"""
-Generate 3 platform-specific event descriptions:
-Title: {event_title}
-Date: {event_date} at {event_time}
-Location: {event_location}
-Original Description: {event_description}
-
-Return JSON: {{"luma": "...", "meetup": "...", "partiful": "..."}}
-
-Luma: Professional, concise
-Meetup: Community-focused, detailed
-Partiful: Fun, casual, emoji-friendly
-"""
-```
-
-## Error Handling
-
-```mermaid
-flowchart TD
-    A[Start Platform Creation] --> B{Navigation Success?}
-    B -->|No| C[FAILED: Network Error]
-    B -->|Yes| D{Auth Check}
-    D -->|Not Logged In| E[NEEDS_AUTH]
-    D -->|Logged In| F{Form Fill Success?}
-    F -->|No| G[FAILED: Form Error]
-    F -->|Yes| H{Submit Success?}
-    H -->|No| I[FAILED: Submit Error]
-    H -->|Yes| J{URL Captured?}
-    J -->|No| K[NEEDS_REVIEW]
-    J -->|Yes| L[PUBLISHED]
-```
-
-## Example Usage
-
-### Basic Usage
-
-```python
-# Via Rube MCP
-RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_xvediVZu8BzW",
-    input_data={
-        "event_title": "AI Workshop: Building with Claude",
-        "event_date": "January 25, 2025",
-        "event_time": "6:00 PM EST",
-        "event_location": "The Station, Philadelphia",
-        "event_description": "Join us for a hands-on workshop...",
-        "meetup_group_url": "https://meetup.com/coffee-code-philly"
-    }
-)
-```
-
-### Skip Problematic Platform
-
-```python
-RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_xvediVZu8BzW",
-    input_data={
-        "event_title": "AI Workshop",
-        "event_date": "January 25, 2025",
-        "event_time": "6:00 PM EST",
-        "event_location": "Philadelphia",
-        "event_description": "Workshop description...",
-        "meetup_group_url": "https://meetup.com/coffee-code-philly",
-        "skip_platforms": "meetup"  # Skip Meetup if having auth issues
-    }
-)
-```
-
-### Single Platform
-
-```python
-RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_xvediVZu8BzW",
-    input_data={
-        "event_title": "Luma-Only Event",
-        "event_date": "January 25, 2025",
-        "event_time": "6:00 PM EST",
-        "event_location": "Online",
-        "event_description": "Virtual event...",
-        "meetup_group_url": "",
-        "platforms": "luma"  # Only create on Luma
-    }
-)
-```
+- Share modal after creation - browser agent dismisses it before URL extraction
+- Recurring events NOT supported
 
 ## Session Management
 
 Browser sessions persist across recipe executions. To maintain sessions:
 
-1. **Initial Login:** Log in once via browser
+1. **Initial Login:** Log in once via Composio connected accounts
 2. **Session Persists:** Subsequent runs use existing session
-3. **Session Expires:** Re-login when NEEDS_AUTH appears
+3. **Session Expires:** Re-login when the browser task navigates to a login page instead of the create form
 
 ```mermaid
 stateDiagram-v2
     [*] --> NotLoggedIn
-    NotLoggedIn --> LoggedIn: Manual Login
+    NotLoggedIn --> LoggedIn: Authenticate via Composio
     LoggedIn --> SessionActive: Recipe Runs
     SessionActive --> SessionActive: Multiple Runs
     SessionActive --> SessionExpired: Time/Logout
-    SessionExpired --> NotLoggedIn: NEEDS_AUTH
-    NotLoggedIn --> LoggedIn: Re-login
+    SessionExpired --> NotLoggedIn: Task fails
+    NotLoggedIn --> LoggedIn: Re-authenticate
 ```
 
 ## Best Practices
 
 1. **Test Login First:** Before running for real events, verify you're logged into all platforms
 2. **Use skip_platforms:** If one platform has issues, skip it rather than failing entirely
-3. **Check NEEDS_REVIEW:** Always verify events were published correctly
-4. **Save Event URLs:** Keep the output for promotion and tracking
+3. **Poll patiently:** Browser tasks can take 30-90 seconds to complete
+4. **Watch the live_url:** Share with user so they can observe the browser in real time
 5. **Run During Low Traffic:** Platform UIs respond better during off-peak hours

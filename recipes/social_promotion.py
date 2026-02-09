@@ -11,12 +11,14 @@ v1: Initial version with hardcoded platform IDs
 
 API LEARNINGS:
 - TWITTER_CREATION_OF_A_POST: Simple text post, image via URL
-- LINKEDIN_GET_CURRENT_USER_PROFILE: Returns 'sub' field for URN construction
+- LINKEDIN_GET_MY_INFO: Returns data.data with 'id' field (person URN suffix)
 - LINKEDIN_CREATE_LINKED_IN_POST: Requires author URN, commentary, visibility
-- INSTAGRAM_USERS_GET_LOGGED_IN_USER_INFO: Returns 'id' for user
-- INSTAGRAM_MEDIA_POST_MEDIA: Requires user_id, image_url, caption, media_type
-- FACEBOOK_CREATE_PAGE_POST: Requires page_id, message
-- DISCORD_SEND_MESSAGE: Requires channel_id, content
+- INSTAGRAM_GET_USER_INFO: Returns 'id' for connected business account
+- INSTAGRAM_CREATE_MEDIA_CONTAINER: Create media container with ig_user_id, image_url, caption
+- INSTAGRAM_GET_POST_STATUS: Poll container status until FINISHED
+- INSTAGRAM_CREATE_POST: Publish container with ig_user_id, creation_id
+- FACEBOOK_CREATE_POST: Requires page_id, message
+- DISCORDBOT_CREATE_MESSAGE: Requires channel_id, content
 
 KNOWN ISSUES:
 - Instagram requires Business/Creator account
@@ -25,7 +27,6 @@ KNOWN ISSUES:
 """
 
 import os
-import re
 import json
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -77,6 +78,7 @@ def sanitize_input(text, max_len=2000):
     # Replace common prompt injection delimiters
     text = text.replace("```", "'''")
     text = text.replace("---", "___")
+    text = text.replace("'", "\u2019")  # curly apostrophe avoids Rube SyntaxError
     # Truncate to max length
     return text[:max_len]
 
@@ -124,8 +126,8 @@ event_time = sanitize_input(os.environ.get("event_time"), max_len=100)
 event_location = sanitize_input(os.environ.get("event_location"), max_len=500)
 event_description = sanitize_input(os.environ.get("event_description"), max_len=5000)
 event_url = os.environ.get("event_url", "")  # URL not sanitized - passed through
-discord_channel_id = os.environ.get("discord_channel_id", "")
-facebook_page_id = os.environ.get("facebook_page_id", "")
+discord_channel_id = os.environ.get("discord_channel_id", "") or os.environ.get("CCP_DISCORD_CHANNEL_ID", "")
+facebook_page_id = os.environ.get("facebook_page_id", "") or os.environ.get("CCP_FACEBOOK_PAGE_ID", "")
 skip_platforms_str = os.environ.get("skip_platforms", "")
 existing_image_url = os.environ.get("image_url", "")
 
@@ -156,7 +158,7 @@ else:
 
     image_result, image_error = run_composio_tool("GEMINI_GENERATE_IMAGE", {
         "prompt": image_prompt,
-        "model": "imagen-3.0-generate-002"
+        "model": "gemini-2.5-flash-image"
     })
 
     if not image_error:
@@ -269,21 +271,23 @@ def post_to_linkedin():
     print(f"[{datetime.utcnow().isoformat()}] Posting to LinkedIn...")
 
     # Auto-discover user URN
-    profile_result, profile_error = run_composio_tool("LINKEDIN_GET_CURRENT_USER_PROFILE", {})
+    profile_result, profile_error = run_composio_tool("LINKEDIN_GET_MY_INFO", {})
     if profile_error:
         return f"failed: Could not get profile - {profile_error}"
 
     profile_data = extract_data(profile_result)
-    sub = profile_data.get("sub", "")
-    if not sub:
+    li_id = profile_data.get("id", "")
+    if not li_id:
         return "failed: Could not determine user URN"
+
+    author_urn = li_id if li_id.startswith("urn:li:") else f"urn:li:person:{li_id}"
 
     li_text = copies.get("linkedin", event_description)
     if event_url:
         li_text += f"\n\nRSVP: {event_url}"
 
     result, error = run_composio_tool("LINKEDIN_CREATE_LINKED_IN_POST", {
-        "author": f"urn:li:person:{sub}",
+        "author": author_urn,
         "commentary": li_text,
         "visibility": "PUBLIC"
     })
@@ -301,22 +305,46 @@ def post_to_instagram():
     print(f"[{datetime.utcnow().isoformat()}] Posting to Instagram...")
 
     # Auto-discover user ID
-    user_result, user_error = run_composio_tool("INSTAGRAM_USERS_GET_LOGGED_IN_USER_INFO", {})
+    user_result, user_error = run_composio_tool("INSTAGRAM_GET_USER_INFO", {})
     if user_error:
         return f"failed: Could not get user info - {user_error}"
 
     user_data = extract_data(user_result)
-    user_id = user_data.get("id", "")
-    if not user_id:
+    ig_user_id = str(user_data.get("id", ""))
+    if not ig_user_id:
         return "failed: Could not determine user ID"
 
-    result, error = run_composio_tool("INSTAGRAM_MEDIA_POST_MEDIA", {
-        "user_id": user_id,
+    # 3-step Instagram posting: create container, poll status, publish
+    container_result, container_error = run_composio_tool("INSTAGRAM_CREATE_MEDIA_CONTAINER", {
+        "ig_user_id": ig_user_id,
         "image_url": results["image_url"],
-        "caption": copies.get("instagram", event_description),
-        "media_type": "IMAGE"
+        "caption": copies.get("instagram", event_description)
     })
-    return "success" if not error else f"failed: {error}"
+    if container_error:
+        return f"failed: Container creation - {container_error}"
+
+    container_data = extract_data(container_result)
+    creation_id = container_data.get("id", "")
+    if not creation_id:
+        return "failed: No container ID returned"
+
+    import time
+    for _ in range(30):
+        time.sleep(5)
+        status_result, _ = run_composio_tool("INSTAGRAM_GET_POST_STATUS", {
+            "ig_user_id": ig_user_id, "creation_id": creation_id
+        })
+        if status_result:
+            sd = extract_data(status_result)
+            if sd.get("status_code") == "FINISHED":
+                pub_result, pub_error = run_composio_tool("INSTAGRAM_CREATE_POST", {
+                    "ig_user_id": ig_user_id, "creation_id": creation_id
+                })
+                return "success" if not pub_error else f"failed: Publish - {pub_error}"
+            elif sd.get("status_code") == "ERROR":
+                return "failed: Media processing error"
+
+    return "failed: Media processing timeout"
 
 
 def post_to_facebook():
@@ -330,7 +358,7 @@ def post_to_facebook():
 
     return post_to_platform(
         "facebook",
-        "FACEBOOK_CREATE_PAGE_POST",
+        "FACEBOOK_CREATE_POST",
         {"page_id": facebook_page_id, "message": fb_message},
         prereq_check=check_page_id
     )
@@ -347,7 +375,7 @@ def post_to_discord():
 
     return post_to_platform(
         "discord",
-        "DISCORD_SEND_MESSAGE",
+        "DISCORDBOT_CREATE_MESSAGE",
         {"channel_id": discord_channel_id, "content": dc_content},
         prereq_check=check_channel_id
     )
