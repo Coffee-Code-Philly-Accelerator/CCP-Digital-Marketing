@@ -20,15 +20,7 @@ This skill is triggered when the user wants to:
 | `event_location` | string | Venue name or address |
 | `event_description` | string | Full event description (max 5000 chars) |
 
-## Optional Inputs
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `image_prompt` | string | auto-generated | Custom prompt for AI image generation |
-| `tenant_id` | string | "default" | Tenant identifier for multi-tenant sessions |
-| `resume` | boolean | false | Resume from checkpoint after auth/2FA |
-
-**Note**: Recurring events are NOT supported on Partiful. The SET_RECURRING state is skipped.
+**Note**: Recurring events are NOT supported on Partiful.
 
 ## Execution
 
@@ -42,10 +34,7 @@ RUBE_EXECUTE_RECIPE(
         "event_date": "<date>",
         "event_time": "<time>",
         "event_location": "<location>",
-        "event_description": "<description>",
-        "image_prompt": "<optional custom prompt>",
-        "tenant_id": "<tenant>",
-        "resume": "<true/false>"
+        "event_description": "<description>"
     }
 )
 ```
@@ -56,32 +45,32 @@ The recipe returns:
 
 ```json
 {
-  "tenant_id": "default",
   "platform": "partiful",
-  "status": "done|paused_2fa|needs_auth|failed",
+  "status": "done|needs_review|failed",
   "event_url": "https://partiful.com/e/abc123",
-  "image_url": "https://...",
+  "image_url": "",
   "error": null,
-  "resume_token": "default:partiful:2fa",
-  "resume_instructions": "..."
+  "live_url": "https://..."
 }
 ```
 
-## Auth/2FA Resume Flow
+## Status Handling
 
-If the recipe returns `status: "paused_2fa"` or `status: "needs_auth"`:
+| Status | Meaning | Action |
+|--------|---------|--------|
+| `done` | Event created successfully | Report event_url to user |
+| `needs_review` | Task finished but URL not confirmed | Ask user to check Partiful manually |
+| `failed` | Browser task error or timeout | Report error, suggest re-running |
 
-1. Inform the user that manual authentication is needed
-2. Wait for the user to confirm they have logged in / completed 2FA in the browser
-3. Re-run the recipe with `resume=true` to continue from the checkpoint
+## Live Browser Watching
 
-Example response to user:
-> The Partiful session requires authentication. Please log in to Partiful in your browser.
-> Once logged in, let me know and I'll resume the event creation.
+The `live_url` field (when available) provides a real-time view of the browser automation. Share this with the user so they can watch the event being created.
 
 ## Platform Notes
 
-- **Share Modal**: Partiful shows a share/invite modal after event creation. The recipe automatically dismisses it before extracting the event URL.
-- **No Recurring Events**: Partiful does not support recurring events. The SET_RECURRING state is skipped.
+- **Architecture**: Uses `BROWSER_TOOL_CREATE_TASK` - a single AI browser agent call that autonomously fills the form (replaces the old multi-step state machine)
+- **Share Modal**: Partiful shows a share/invite modal after event creation. The browser agent automatically dismisses it before extracting the event URL.
+- **No Recurring Events**: Partiful does not support recurring events.
 - **Create URL**: https://partiful.com/create
 - **Success URL Pattern**: `partiful.com/e/`
+- **Session Expiry**: If the Composio browser session is expired, re-authenticate via Composio connected accounts and re-run

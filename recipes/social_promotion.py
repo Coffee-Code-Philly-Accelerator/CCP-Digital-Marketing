@@ -5,7 +5,8 @@ RECIPE ID: rcp_zBzqs2LO-miP
 FLOW: Event Details → Gemini Image → LLM Copy → Parallel Social Posting
 
 VERSION HISTORY:
-v2 (current): Added auto-discovery for LinkedIn URN and Instagram User ID, graceful degradation
+v3 (current): Added optional image_url input to reuse existing image and skip Gemini generation
+v2: Added auto-discovery for LinkedIn URN and Instagram User ID, graceful degradation
 v1: Initial version with hardcoded platform IDs
 
 API LEARNINGS:
@@ -126,6 +127,7 @@ event_url = os.environ.get("event_url", "")  # URL not sanitized - passed throug
 discord_channel_id = os.environ.get("discord_channel_id", "")
 facebook_page_id = os.environ.get("facebook_page_id", "")
 skip_platforms_str = os.environ.get("skip_platforms", "")
+existing_image_url = os.environ.get("image_url", "")
 
 # Validate required inputs
 if not all([event_title, event_date, event_time, event_location, event_description]):
@@ -144,23 +146,27 @@ results = {
     "summary": ""
 }
 
-# Step 1: Generate promotional image
-print(f"[{datetime.utcnow().isoformat()}] Generating promotional image...")
-image_prompt = f"Create a modern, eye-catching event promotional graphic for: {event_title}. Style: professional, vibrant colors, suitable for social media. Do not include any text in the image."
-
-image_result, image_error = run_composio_tool("GEMINI_GENERATE_IMAGE", {
-    "prompt": image_prompt,
-    "model": "imagen-3.0-generate-002"
-})
-
-if not image_error:
-    image_data = image_result.get("data", {})
-    if "data" in image_data:
-        image_data = image_data["data"]
-    results["image_url"] = image_data.get("publicUrl", "")
-    print(f"[{datetime.utcnow().isoformat()}] Image generated: {results['image_url']}")
+# Step 1: Generate promotional image (or reuse provided one)
+if existing_image_url:
+    results["image_url"] = existing_image_url
+    print(f"[{datetime.utcnow().isoformat()}] Using provided image: {results['image_url']}")
 else:
-    print(f"[{datetime.utcnow().isoformat()}] Image generation failed: {image_error}")
+    print(f"[{datetime.utcnow().isoformat()}] Generating promotional image...")
+    image_prompt = f"Create a modern, eye-catching event promotional graphic for: {event_title}. Style: professional, vibrant colors, suitable for social media. Do not include any text in the image."
+
+    image_result, image_error = run_composio_tool("GEMINI_GENERATE_IMAGE", {
+        "prompt": image_prompt,
+        "model": "imagen-3.0-generate-002"
+    })
+
+    if not image_error:
+        image_data = image_result.get("data", {})
+        if "data" in image_data:
+            image_data = image_data["data"]
+        results["image_url"] = image_data.get("publicUrl", "")
+        print(f"[{datetime.utcnow().isoformat()}] Image generated: {results['image_url']}")
+    else:
+        print(f"[{datetime.utcnow().isoformat()}] Image generation failed: {image_error}")
 
 # Step 2: Generate platform-specific copy
 print(f"[{datetime.utcnow().isoformat()}] Generating platform-specific copy...")
