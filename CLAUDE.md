@@ -205,3 +205,389 @@ Skills are defined in `.claude/skills/`. Each wraps a `RUBE_EXECUTE_RECIPE` call
 | Auth Setup | `auth-setup/` | N/A (direct tool calls) | Set up Hyperbrowser persistent auth profiles |
 
 **Chaining:** The social-promote and full-workflow skills accept an optional `image_url` input. When provided (e.g., from a prior event creation), the social promotion recipe skips Gemini image generation and reuses the existing image.
+
+---
+
+# Design Philosophy
+
+> **Instruction to Agent:** Consult the following principles before generating any new classes, functions, or error handling logic.
+
+## Principle Priority (Conflict Resolution)
+
+When principles conflict, follow this priority order:
+
+1. **Let It Crash** (highest) - Visibility of errors trumps all
+2. **KISS** - Simplicity over elegance
+3. **Pure Functions** - Determinism over convenience
+4. **SOLID** (lowest) - Architecture can flex for simplicity
+
+**Example Conflicts:**
+- **KISS vs Pure Functions**: If dependency injection adds excessive ceremony for a simple utility, prefer the simpler impure version with a comment.
+- **SOLID vs KISS**: If an abstraction has only 1 use case, keep it inline even if it violates OCP.
+- **Let It Crash vs KISS**: A visible crash is NEVER simplified away with a silent fallback.
+
+---
+
+## CRITICAL: Let It Crash (Primary Principle)
+
+**This is the most important design principle in this codebase. Read this section first before writing ANY error handling code.**
+
+**CORE PRINCIPLE**: Embrace controlled failure. NO defensive programming. NO exponential backoffs. NO complex fallback chains. Let errors propagate and crash visibly.
+
+### The Golden Rule
+
+**Do NOT write `try/except`. Period.**
+
+The default for every function is zero error handling. Errors propagate, crash visibly, and give a full stack trace. This is the correct behavior in virtually all cases.
+
+### Why No try/except
+
+| What try/except does | Why it's harmful |
+|----------------------|------------------|
+| Hides the root cause | Stack trace is lost or obscured |
+| Creates silent failures | Bugs survive in production undetected |
+| Adds code complexity | More branches, harder to reason about |
+| Encourages defensive coding | Treats symptoms instead of fixing sources |
+| Makes debugging harder | "It returned None" tells you nothing |
+
+### What to Do Instead
+
+**Use error-returning patterns.** This codebase already follows this: `run_composio_tool()` returns `(result, error)` tuples. Check the error value explicitly -- no exceptions needed.
+
+```python
+# GOOD - Error values, not exceptions
+result, error = run_composio_tool("TOOL_NAME", args)
+if error:
+    print(f"Tool failed: {error}")
+    output = {"status": "FAILED", "error": error}
+else:
+    output = {"status": "DONE", "data": result}
+
+# GOOD - Let it crash for internal operations
+def create_event_payload(title: str, date: str, time: str) -> dict:
+    payload = {"event_title": title, "event_date": date, "event_time": time}
+    return payload  # No error handling needed!
+
+# GOOD - Validate inputs up front, don't catch failures later
+if not all([event_title, event_date, event_time]):
+    raise ValueError("Missing required inputs")
+# Now proceed knowing inputs are valid -- no defensive checks downstream
+
+# GOOD - Use conditional logic instead of exception control flow
+response = invoke_llm(prompt)
+if response is None or response == "":
+    output = {"status": "FAILED", "error": "LLM returned empty response"}
+else:
+    output = {"status": "DONE", "content": response}
+```
+
+### FORBIDDEN Patterns
+
+```python
+# FORBIDDEN - Silent swallowing
+try:
+    do_something()
+except Exception:
+    pass
+
+# FORBIDDEN - Exception as control flow
+try:
+    result = process_event(event)
+except Exception:
+    return None
+
+# FORBIDDEN - Retry/backoff loops
+for attempt in range(MAX_RETRIES):
+    try:
+        result = call_api()
+        break
+    except Exception:
+        time.sleep(2 ** attempt)
+
+# FORBIDDEN - Fallback chains
+try:
+    result = primary_method()
+except Exception:
+    try:
+        result = fallback_method()
+    except Exception:
+        result = default_value
+```
+
+### The ONLY Exception (Literally)
+
+If a third-party library forces exception-based error handling (no error-return alternative exists), you may catch **one specific exception type** with a `# LET-IT-CRASH-EXCEPTION` annotation. This should be rare -- most libraries used in this project (Composio tools, `invoke_llm`) already return error tuples.
+
+```python
+# LET-IT-CRASH-EXCEPTION: IMPORT_GUARD - module may not be installed
+try:
+    import optional_module
+except ImportError:
+    optional_module = None
+```
+
+If you find yourself wanting to write more than this, **stop and redesign**. The function signature or the calling pattern is wrong.
+
+### Code Review Rule
+
+**Any `try/except` block in a PR requires explicit justification in the PR description.** The default review stance is: remove it.
+
+---
+
+## SOLID Principles
+
+**CORE PRINCIPLE**: Design systems with high cohesion and low coupling for maintainability, testability, and extensibility.
+
+### 1. Single Responsibility Principle (SRP)
+
+> "A module should have one, and only one, reason to change"
+
+Each component/function/class should do ONE thing well. Separate concerns: state management != business logic != data fetching.
+
+```python
+# BAD - Function with multiple responsibilities
+def process_event(title, date, time, location):
+    sanitized = sanitize_all_inputs(title, date, time, location)  # Sanitization
+    payload = build_payload(sanitized)                             # Payload construction
+    result = call_browser_api(payload)                             # API call
+    post_to_social(result["url"])                                  # Social posting
+    return format_output(result)                                   # Formatting
+
+# GOOD - Single responsibility per function
+def sanitize_input(text: str, max_len: int = 2000) -> str:
+    """Sanitize user input for safe inclusion in task descriptions."""
+    if not text:
+        return ""
+    text = str(text)
+    text = ''.join(char for char in text if char >= ' ' or char in '\n\t')
+    return text[:max_len]
+```
+
+### 2. Open-Closed Principle (OCP)
+
+> "Software entities should be open for extension, but closed for modification"
+
+Add new features WITHOUT changing existing code. Use configuration and composition over modification.
+
+```python
+# BAD - Must modify function for new platforms
+def create_event(platform: str, details: dict):
+    if platform == "luma":
+        return create_luma_event(details)
+    elif platform == "meetup":
+        return create_meetup_event(details)
+    # New platform = code change every time
+
+# GOOD - Extensible via configuration
+PLATFORM_RECIPES = {
+    "luma": "rcp_mXyFyALaEsQF",
+    "meetup": "rcp_kHJoI1WmR3AR",
+    "partiful": "rcp_bN7jRF5P_Kf0",
+    # To add new platform: just extend this dict
+}
+
+def create_event(platform: str, details: dict):
+    recipe_id = PLATFORM_RECIPES[platform]
+    return execute_recipe(recipe_id, details)
+```
+
+### 3. Liskov Substitution Principle (LSP)
+
+> "Subtypes must be substitutable for their base types without altering correctness"
+
+Implementations must honor the contract of the base type. Consumers shouldn't need to know the specific implementation.
+
+### 4. Interface Segregation Principle (ISP)
+
+> "Clients should not be forced to depend on interfaces they don't use"
+
+Many specific interfaces > one general-purpose interface. Avoid "fat" interfaces that force implementing unused methods.
+
+### 5. Dependency Inversion Principle (DIP)
+
+> "Depend on abstractions, not concretions"
+
+High-level modules shouldn't depend on low-level implementation details. Enables testing and swapping implementations.
+
+```python
+# BAD - Depends on concrete implementation
+class EventCreator:
+    def __init__(self):
+        self.api_key = os.environ["COMPOSIO_API_KEY"]  # Tight coupling!
+
+# GOOD - Inject dependencies
+class EventCreator:
+    def __init__(self, api_key: str):
+        self.api_key = api_key  # Testable, swappable
+```
+
+### Code Review Checklist
+
+- [ ] Does this component have a single, clear purpose? (SRP)
+- [ ] Can I add new behavior without modifying existing code? (OCP)
+- [ ] Can I substitute different implementations without breaking consumers? (LSP)
+- [ ] Are interfaces minimal and focused? (ISP)
+- [ ] Am I depending on abstractions, not concrete types? (DIP)
+
+**BALANCE**: Don't over-engineer. For simple utilities, pragmatism > purity.
+
+---
+
+## KISS Principle (Keep It Simple, Stupid)
+
+**CORE PRINCIPLE**: Simplicity should be a key design goal; unnecessary complexity is the enemy of reliability and maintainability.
+
+### Key Tenets
+
+1. **Readable over Clever**: Code that any developer can understand beats elegant one-liners
+2. **Explicit over Implicit**: Clear intentions trump magic behavior
+3. **Do One Thing Well**: Avoid multi-purpose functions that try to handle every case
+4. **Avoid Premature Abstraction**: Wait for 3+ use cases before abstracting
+5. **Avoid Premature Optimization**: Simple first, optimize when proven necessary
+
+### Decision Metric
+
+> "Can the next engineer accurately predict behavior and modify it safely?"
+
+### Objective KISS Metrics
+
+| Metric | Threshold | Action |
+|--------|-----------|--------|
+| Function length | > 30 lines | Consider splitting |
+| Cyclomatic complexity | > 15 | Refactor required |
+| Nesting depth | > 3 levels | Flatten with early returns |
+| Parameters | > 8 | Consider parameter object |
+| File length | > 500 lines | Consider module split |
+
+### Patterns
+
+```python
+# BAD - Clever but hard to understand
+def process(d): return {k: v.strip().lower() for k, v in d.items() if v and isinstance(v, str) and not k.startswith('_')}
+
+# GOOD - KISS approach
+def normalize_data(data: dict[str, str]) -> dict[str, str]:
+    """Normalize string values in data dict."""
+    result = {}
+    for key, value in data.items():
+        if key.startswith('_'):
+            continue
+        if not isinstance(value, str):
+            continue
+        result[key] = value.strip().lower()
+    return result
+```
+
+### Anti-Patterns to Avoid
+
+```python
+# BAD - Unnecessary abstraction for single use case
+class SingletonConfigManagerFactoryProvider:
+    _instance = None
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+# GOOD - Just use the value directly
+CONFIG = {"browser_provider": "hyperbrowser", "max_steps": 25}
+
+# BAD - Clever ternary chains
+result = a if x else b if y else c if z else d
+
+# GOOD - Clear conditionals
+if x:
+    result = a
+elif y:
+    result = b
+elif z:
+    result = c
+else:
+    result = d
+```
+
+---
+
+## Pure Functions
+
+**CORE PRINCIPLE**: Functions should be deterministic transformations with no side effects--output depends ONLY on inputs.
+
+### Two Strict Requirements
+
+1. **Deterministic**: Same inputs -> same output (always, every time)
+2. **No Side Effects**: No mutation, no I/O, no external state modification
+
+### What Makes a Function Impure
+
+| Impurity | Example | How to Fix |
+|----------|---------|------------|
+| Global state | Reading/writing module-level variables | Pass as parameters |
+| Mutation | Modifying input parameters | Return new objects |
+| I/O operations | `print()`, file read/write, network | Push to boundaries |
+| Non-determinism | `datetime.now()`, `random.random()` | Inject as parameters |
+| External calls | Database queries, API calls | Push to boundaries |
+
+### Pattern: Functional Core, Imperative Shell
+
+```python
+# PURE CORE - Business logic as pure functions
+def build_task_description(title: str, date: str, time: str, location: str, description: str) -> str:
+    """Pure: deterministic string construction from inputs."""
+    return f"""Create an event with these details:
+    Title: {title}
+    Date: {date}
+    Time: {time}
+    Location: {location}
+    Description: {description}"""
+
+def determine_primary_url(luma_url: str, meetup_url: str, partiful_url: str) -> str:
+    """Pure: deterministic URL priority selection."""
+    return luma_url or meetup_url or partiful_url or ""
+
+# IMPERATIVE SHELL - Side effects at boundaries
+def run_event_creation(event_details: dict) -> dict:
+    """Impure shell: I/O at boundaries, pure core for logic."""
+    # Side effect: API call
+    result, error = run_composio_tool("BROWSER_TOOL_CREATE_TASK", {
+        "task": build_task_description(**event_details),  # Pure core
+    })
+
+    # Pure core
+    primary_url = determine_primary_url(
+        result.get("luma_url", ""),
+        result.get("meetup_url", ""),
+        result.get("partiful_url", ""),
+    )
+
+    # Side effect: logging
+    print(f"Primary URL: {primary_url}")
+
+    return {"event_url": primary_url, "status": "done"}
+```
+
+### Decision Rules
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Business logic / transformations | **Default to pure** |
+| Validation rules | **Default to pure** |
+| Data formatting / mapping | **Default to pure** |
+| I/O operations (API calls, browser tools) | Push to boundaries |
+| Logging / metrics | Push to boundaries |
+| Making it pure adds excessive wiring | Consider contained side effect |
+
+### KISS + Pure Functions Synergy
+
+Pure functions ARE KISS applied to function design--they eliminate the complexity of tracking state changes and side effects.
+
+> **KISS is the goal (minimize complexity); pure functions are one of the best tools to achieve it--so long as the purity itself doesn't add more complexity than it removes.**
+
+When purity increases ceremony (excessive parameter threading, complex type gymnastics), KISS may prefer a small, explicit side effect.
+
+### Code Review Checklist
+
+- [ ] Can this function be pure? (no external state needed?)
+- [ ] Are side effects pushed to boundaries?
+- [ ] Would making this pure add more complexity than it removes?
+- [ ] Is the simplest solution also the correct one?
+- [ ] Can the next engineer predict behavior and modify safely?
