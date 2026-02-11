@@ -65,7 +65,7 @@ flowchart LR
         R1[Recipe: Luma Create<br/>rcp_mXyFyALaEsQF]
         R2[Recipe: Meetup Create<br/>rcp_kHJoI1WmR3AR]
         R3[Recipe: Partiful Create<br/>rcp_bN7jRF5P_Kf0]
-        R4[Recipe: Social Promotion<br/>rcp_zBzqs2LO-miP]
+        R4[Recipe: Social Promotion<br/>rcp_X65IirgPhwh3]
     end
 
     subgraph Browser["Browser Automation (v2)"]
@@ -125,7 +125,7 @@ flowchart LR
 4. Fill in event details and run each recipe
 5. Poll `BROWSER_TOOL_WATCH_TASK` with the returned `task_id` until finished
 6. Copy event URLs from poll results
-7. Run "Event Social Promotion" (`rcp_zBzqs2LO-miP`) with the URLs
+7. Run "Event Social Promotion" (`rcp_X65IirgPhwh3`) with the URLs
 
 ### Option 2: Via Claude Code with Rube MCP
 
@@ -209,7 +209,7 @@ sequenceDiagram
 
 ### Recipe 4: Event Social Promotion
 
-**Recipe ID:** `rcp_zBzqs2LO-miP`
+**Recipe ID:** `rcp_X65IirgPhwh3`
 **Recipe URL:** [View on Rube](https://rube.app)
 
 Posts event announcements to 5 social platforms with AI-generated content.
@@ -297,7 +297,7 @@ flowchart TD
     end
 
     subgraph Phase2["Phase 2: Social Promotion"]
-        G --> H[Recipe: Event Social Promotion<br/>rcp_zBzqs2LO-miP]
+        G --> H[Recipe: Event Social Promotion<br/>rcp_X65IirgPhwh3]
         H --> I[Twitter Post]
         H --> J[LinkedIn Post]
         H --> K[Instagram Post]

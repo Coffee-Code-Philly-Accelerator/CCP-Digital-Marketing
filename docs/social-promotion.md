@@ -1,6 +1,6 @@
 # Social Promotion Recipe - Detailed Documentation
 
-**Recipe ID:** `rcp_zBzqs2LO-miP`
+**Recipe ID:** `rcp_X65IirgPhwh3`
 **Recipe URL:** [View on Rube](https://rube.app)
 
 ## Overview
@@ -349,7 +349,7 @@ flowchart TD
 
 ```python
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_zBzqs2LO-miP",
+    recipe_id="rcp_X65IirgPhwh3",
     input_data={
         "event_title": "AI Workshop: Building with Claude",
         "event_date": "January 25, 2025",
@@ -367,7 +367,7 @@ RUBE_EXECUTE_RECIPE(
 
 ```python
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_zBzqs2LO-miP",
+    recipe_id="rcp_X65IirgPhwh3",
     input_data={
         "event_title": "AI Workshop",
         "event_date": "January 25, 2025",

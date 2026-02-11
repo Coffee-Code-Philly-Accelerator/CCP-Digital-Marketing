@@ -37,7 +37,7 @@ Use the Rube MCP tool to execute the social promotion recipe:
 
 ```
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_zBzqs2LO-miP",
+    recipe_id="rcp_X65IirgPhwh3",
     input_data={
         "event_title": "<title>",
         "event_date": "<date>",
@@ -89,7 +89,7 @@ When chaining from a prior event creation skill (luma-create, meetup-create, or 
 #   image_url: "https://..."
 
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_zBzqs2LO-miP",
+    recipe_id="rcp_X65IirgPhwh3",
     input_data={
         ...event details...,
         "event_url": "<event_url from creation result>",

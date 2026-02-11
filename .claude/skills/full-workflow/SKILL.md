@@ -131,7 +131,7 @@ After all event creation steps complete, run social promotion with the primary U
 **Step 4 - Social Promotion**:
 ```
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_zBzqs2LO-miP",
+    recipe_id="rcp_X65IirgPhwh3",
     input_data={
         "event_title": "<title>",
         "event_date": "<date>",

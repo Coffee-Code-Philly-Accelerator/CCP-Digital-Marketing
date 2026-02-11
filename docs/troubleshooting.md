@@ -257,7 +257,7 @@ When you need to post urgently:
 
 # Skip social platforms with issues
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_zBzqs2LO-miP",
+    recipe_id="rcp_X65IirgPhwh3",
     input_data={
         ...,
         "skip_platforms": "facebook,discord"  # Skip FB and Discord
