@@ -68,10 +68,17 @@ flowchart LR
         R4[Recipe: Social Promotion<br/>rcp_X65IirgPhwh3]
     end
 
-    subgraph Browser["Browser Automation (v2)"]
-        BA[BROWSER_TOOL_CREATE_TASK]
-        BB[BROWSER_TOOL_WATCH_TASK]
-        BC[BROWSER_TOOL_GET_SESSION]
+    subgraph Browser["Browser Automation"]
+        subgraph HB["Hyperbrowser (Primary)"]
+            BA1[HYPERBROWSER_START_BROWSER_USE_TASK]
+            BB1[HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS]
+            BC1[HYPERBROWSER_GET_SESSION_DETAILS]
+        end
+        subgraph BT["browser_tool (Fallback)"]
+            BA2[BROWSER_TOOL_CREATE_TASK]
+            BB2[BROWSER_TOOL_WATCH_TASK]
+            BC2[BROWSER_TOOL_GET_SESSION]
+        end
     end
 
     subgraph APIs["Direct API Integrations"]
@@ -104,7 +111,8 @@ flowchart LR
 
 | App | Connection Type | Required For |
 |-----|-----------------|--------------|
-| `BROWSER_TOOL` | Browser Session | Event creation |
+| `HYPERBROWSER` | API Key | Event creation (primary browser provider) |
+| `BROWSER_TOOL` | Browser Session | Event creation (fallback browser provider) |
 | `GEMINI` | API Key | Image generation |
 | `TWITTER` | OAuth 2.0 | Social posting |
 | `LINKEDIN` | OAuth 2.0 | Social posting |
@@ -117,13 +125,13 @@ flowchart LR
 ### Option 1: Via Rube App (Recommended)
 
 1. Open [Rube App](https://rube.app)
-2. Navigate to Recipes
+2. **Set up auth profiles first** (one-time): Run the auth-setup skill for each platform (Luma, Meetup, Partiful) to create Hyperbrowser persistent profiles with saved login cookies
 3. Run per-platform event creation recipes:
    - Luma: `rcp_mXyFyALaEsQF`
    - Meetup: `rcp_kHJoI1WmR3AR`
    - Partiful: `rcp_bN7jRF5P_Kf0`
 4. Fill in event details and run each recipe
-5. Poll `BROWSER_TOOL_WATCH_TASK` with the returned `task_id` until finished
+5. Poll for completion using the provider-specific tool returned by the recipe (`HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS` or `BROWSER_TOOL_WATCH_TASK`)
 6. Copy event URLs from poll results
 7. Run "Event Social Promotion" (`rcp_X65IirgPhwh3`) with the URLs
 
@@ -141,19 +149,19 @@ at The Station, Philadelphia. Then promote it on all social platforms."
 
 **Recipe ID:** `rcp_mXyFyALaEsQF`
 
-Creates an event on Luma (lu.ma) using an AI browser agent.
+Creates an event on Luma (lu.ma) using an AI browser agent. Defaults to Hyperbrowser with persistent auth profiles.
 
 ### Recipe 2: Create Event on Meetup
 
 **Recipe ID:** `rcp_kHJoI1WmR3AR`
 
-Creates an event on Meetup using an AI browser agent.
+Creates an event on Meetup using an AI browser agent. Defaults to Hyperbrowser with persistent auth profiles.
 
 ### Recipe 3: Create Event on Partiful
 
 **Recipe ID:** `rcp_bN7jRF5P_Kf0`
 
-Creates an event on Partiful using an AI browser agent.
+Creates an event on Partiful using an AI browser agent. Defaults to Hyperbrowser with persistent auth profiles.
 
 #### Event Creation Sequence (all platforms)
 
@@ -161,24 +169,36 @@ Creates an event on Partiful using an AI browser agent.
 sequenceDiagram
     participant U as User/Caller
     participant R as Recipe
-    participant B as Browser Agent
+    participant HB as Hyperbrowser / browser_tool
     participant P as Platform
 
     U->>R: Event Details
-    R->>B: BROWSER_TOOL_CREATE_TASK<br/>(task description + startUrl)
-    B-->>R: task_id + session_id
-    R->>B: BROWSER_TOOL_GET_SESSION
-    B-->>R: live_url
-    R-->>U: {task_id, live_url, status: "running"}
+    alt Hyperbrowser (default)
+        R->>HB: HYPERBROWSER_START_BROWSER_USE_TASK<br/>(task + profile + session options)
+        HB-->>R: jobId + sessionId
+        R->>HB: HYPERBROWSER_GET_SESSION_DETAILS
+        HB-->>R: liveUrl
+    else browser_tool (fallback)
+        R->>HB: BROWSER_TOOL_CREATE_TASK<br/>(task description + startUrl)
+        HB-->>R: watch_task_id + browser_session_id
+        R->>HB: BROWSER_TOOL_GET_SESSION
+        HB-->>R: liveUrl
+    end
+    R-->>U: {task_id, live_url, provider, status: "running"}
 
     loop Poll every 10-15s (caller-side)
-        U->>B: BROWSER_TOOL_WATCH_TASK(task_id)
-        B-->>U: {status: "started"|"finished"|"stopped", current_url}
+        alt Hyperbrowser
+            U->>HB: HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS(task_id)
+            HB-->>U: {status: "running"|"completed"|"failed"}
+        else browser_tool
+            U->>HB: BROWSER_TOOL_WATCH_TASK(taskId)
+            HB-->>U: {status: "started"|"finished"|"stopped", current_url}
+        end
     end
 
-    Note over B,P: Browser agent fills form and submits
-    B->>P: Submit event
-    P-->>B: Event page URL
+    Note over HB,P: Browser agent fills form and submits
+    HB->>P: Submit event
+    P-->>HB: Event page URL
 ```
 
 #### Input Parameters (all event creation recipes)
@@ -197,10 +217,13 @@ sequenceDiagram
 {
   "platform": "luma|meetup|partiful",
   "status": "running",
-  "task_id": "<use for BROWSER_TOOL_WATCH_TASK>",
+  "task_id": "<use for polling>",
   "session_id": "<browser session>",
   "live_url": "https://...",
   "event_url": "",
+  "provider": "hyperbrowser|browser_tool",
+  "poll_tool": "HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS|BROWSER_TOOL_WATCH_TASK",
+  "poll_args_key": "task_id|taskId",
   "error": null
 }
 ```
@@ -289,11 +312,11 @@ For a complete event launch, run event creation recipes sequentially, then socia
 flowchart TD
     subgraph Phase1["Phase 1: Event Creation (Sequential)"]
         A[User provides event details] --> B[Luma Recipe<br/>rcp_mXyFyALaEsQF]
-        B --> C[Poll WATCH_TASK until done]
+        B --> C[Poll until done]
         C --> D[Meetup Recipe<br/>rcp_kHJoI1WmR3AR]
-        D --> E[Poll WATCH_TASK until done]
+        D --> E[Poll until done]
         E --> F[Partiful Recipe<br/>rcp_bN7jRF5P_Kf0]
-        F --> G[Poll WATCH_TASK until done]
+        F --> G[Poll until done]
     end
 
     subgraph Phase2["Phase 2: Social Promotion"]
@@ -316,9 +339,9 @@ Current integration status for each platform:
 
 | Platform | Type | Status | Notes |
 |----------|------|--------|-------|
-| **Luma** | Browser | Tested | Session persists |
-| **Meetup** | Browser | Tested | May need re-auth |
-| **Partiful** | Browser | Tested | Session persists |
+| **Luma** | Browser (Hyperbrowser) | Tested | Persistent profile with saved auth |
+| **Meetup** | Browser (Hyperbrowser) | Tested | Persistent profile with saved auth |
+| **Partiful** | Browser (Hyperbrowser) | Tested | Persistent profile with saved auth |
 | **Twitter/X** | API | Working | OAuth connected |
 | **LinkedIn** | API | Working | OAuth connected |
 | **Instagram** | API | Working | Business account required |
@@ -329,15 +352,53 @@ Current integration status for each platform:
 
 ```mermaid
 flowchart TD
-    A[Browser Agent Starts Task] --> B{Already Logged In?}
-    B -->|Yes| C[Fill Form with AI Agent]
-    B -->|No| D[Task fails / navigates to login]
-    D --> E[User authenticates via Composio]
-    E --> F[Re-run recipe]
-    F --> C
-    C --> G[Submit/Publish]
-    G --> H[Capture Event URL via WATCH_TASK polling]
+    A[First-Time Setup] --> B[Run auth-setup skill per platform]
+    B --> C[Hyperbrowser creates session with persistent profile]
+    C --> D[User logs in via interactive live URL]
+    D --> E[Cookies saved to profile]
+
+    F[Event Creation] --> G{Profile has valid auth?}
+    G -->|Yes| H[AI browser agent fills form]
+    G -->|No / NEEDS_AUTH| I[Re-run auth-setup to re-login]
+    I --> G
+    H --> J[Submit/Publish]
+    J --> K[Capture Event URL via polling]
 ```
+
+## Browser Provider Configuration
+
+Event creation recipes support two browser providers, controlled by `CCP_BROWSER_PROVIDER`:
+
+| Provider | Value | Description |
+|----------|-------|-------------|
+| Hyperbrowser | `hyperbrowser` (default) | Persistent profiles with saved auth cookies. Requires one-time profile setup via auth-setup skill. |
+| Composio browser_tool | `browser_tool` | Ephemeral sessions (no auth persistence). Fallback provider. |
+
+### Auth Setup (One-Time)
+
+Before creating events with Hyperbrowser, set up persistent profiles:
+
+1. Run the **auth-setup** skill for each platform (Luma, Meetup, Partiful)
+2. Open the interactive live URL provided
+3. Complete login (Google OAuth or platform-specific)
+4. Save the profile IDs to your `.env` file (`CCP_LUMA_PROFILE_ID`, `CCP_MEETUP_PROFILE_ID`, `CCP_PARTIFUL_PROFILE_ID`)
+
+If a recipe returns `NEEDS_AUTH`, re-run auth-setup with the existing `profile_id` to re-login without creating a new profile.
+
+## Environment Variables
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `COMPOSIO_API_KEY` | Yes | - | Composio API authentication |
+| `CCP_BROWSER_PROVIDER` | No | `hyperbrowser` | Browser provider: `hyperbrowser` or `browser_tool` |
+| `CCP_LUMA_PROFILE_ID` | No | - | Hyperbrowser profile UUID for Luma |
+| `CCP_MEETUP_PROFILE_ID` | No | - | Hyperbrowser profile UUID for Meetup |
+| `CCP_PARTIFUL_PROFILE_ID` | No | - | Hyperbrowser profile UUID for Partiful |
+| `CCP_DISCORD_CHANNEL_ID` | No | - | Discord channel for social promotion |
+| `CCP_FACEBOOK_PAGE_ID` | No | - | Facebook page for social promotion |
+| `CCP_MEETUP_GROUP_URL` | No | `https://www.meetup.com/code-coffee-philly` | Default Meetup group URL |
+
+See `scripts/.env.example` for the full list including optional overrides.
 
 ## Troubleshooting
 
@@ -359,15 +420,17 @@ CCP-Digital-Marketing/
 │   ├── social-promotion.md      # Detailed social promotion docs
 │   └── troubleshooting.md       # Common issues & solutions
 ├── recipes/
-│   ├── luma_create_event.py     # Luma event creation recipe
-│   ├── meetup_create_event.py   # Meetup event creation recipe
-│   ├── partiful_create_event.py # Partiful event creation recipe
-│   └── social_promotion.py      # Social promotion recipe
+│   ├── luma_create_event.py     # Luma event creation recipe (Hyperbrowser + browser_tool)
+│   ├── meetup_create_event.py   # Meetup event creation recipe (Hyperbrowser + browser_tool)
+│   ├── partiful_create_event.py # Partiful event creation recipe (Hyperbrowser + browser_tool)
+│   ├── social_promotion.py      # Social promotion recipe
+│   └── auth_setup.py            # Hyperbrowser auth profile setup
 ├── scripts/
 │   ├── recipe_client.py         # CLI client for recipe execution
 │   ├── requirements.txt         # Python dependencies
 │   └── .env.example             # Environment variable template
 ├── .claude/skills/
+│   ├── auth-setup/              # Hyperbrowser persistent auth profile setup
 │   ├── luma-create/             # Luma event creation skill
 │   ├── meetup-create/           # Meetup event creation skill
 │   ├── partiful-create/         # Partiful event creation skill
