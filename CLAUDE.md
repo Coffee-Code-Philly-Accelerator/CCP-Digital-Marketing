@@ -37,6 +37,12 @@ python scripts/recipe_client.py promote \
   --event-url "https://lu.ma/abc123"
 
 python scripts/recipe_client.py full-workflow [same args]
+
+# Generic social post (not event-specific)
+python scripts/recipe_client.py social-post \
+  --topic "New Partnership" --content "We're partnering with TechHub!" \
+  --url "https://example.com" --tone "excited"
+
 python scripts/recipe_client.py info
 ```
 
@@ -65,6 +71,7 @@ output
 | Create Event (Meetup) | `rcp_kHJoI1WmR3AR` | AI browser agent creates event on Meetup |
 | Create Event (Partiful) | `rcp_bN7jRF5P_Kf0` | AI browser agent creates event on Partiful |
 | Social Promotion | `rcp_X65IirgPhwh3` | Parallel API posting to 5 social platforms |
+| Social Post | `rcp_PLACEHOLDER` | Generic social media post (non-event content) |
 
 All event creation recipes default to Hyperbrowser (`HYPERBROWSER_START_BROWSER_USE_TASK`) with persistent auth profiles, falling back to Composio's `BROWSER_TOOL_CREATE_TASK` when configured. Both use a single AI browser agent call + polling pattern instead of the old multi-step state machine with sequential `NAVIGATE`/`PERFORM_WEB_TASK`/`FETCH_WEBPAGE` calls that exceeded the 4-minute Rube runtime timeout.
 
@@ -201,6 +208,7 @@ Skills are defined in `.claude/skills/`. Each wraps a `RUBE_EXECUTE_RECIPE` call
 | Meetup Create | `meetup-create/` | `rcp_kHJoI1WmR3AR` | Create event on Meetup via browser automation |
 | Partiful Create | `partiful-create/` | `rcp_bN7jRF5P_Kf0` | Create event on Partiful via browser automation |
 | Social Promote | `social-promote/` | `rcp_X65IirgPhwh3` | Post event to Twitter, LinkedIn, Instagram, Facebook, Discord |
+| Social Post | `social-post/` | `rcp_PLACEHOLDER` | Post generic content (non-event) to social media platforms |
 | Full Workflow | `full-workflow/` | All of the above | Orchestrate: create on all platforms, then promote on social media |
 | Auth Setup | `auth-setup/` | N/A (direct tool calls) | Set up Hyperbrowser persistent auth profiles |
 

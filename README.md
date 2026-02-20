@@ -4,7 +4,7 @@
 [![Composio](https://img.shields.io/badge/Built%20with-Composio-green)](https://composio.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Automated event creation and social media promotion system for Coffee Code Philly Accelerator. Creates events across multiple platforms and promotes them on social media with AI-generated content.
+Automated event creation and social media promotion system for Coffee Code Philly Accelerator. Creates events across multiple platforms and promotes them on social media with AI-generated content. Also supports generic social media posts (community updates, tech news, sponsor shout-outs) that aren't tied to a specific event.
 
 ## Overview
 
@@ -12,6 +12,7 @@ This system automates the entire event lifecycle:
 1. **Event Creation** - Sequentially creates events on Luma, Meetup, and Partiful via browser automation
 2. **Content Generation** - AI generates promotional images and platform-optimized descriptions
 3. **Social Promotion** - Posts to Twitter, LinkedIn, Instagram, Facebook, and Discord
+4. **Generic Social Posts** - Post any content (not just events) to all social platforms
 
 ```mermaid
 flowchart TB
@@ -66,6 +67,7 @@ flowchart LR
         R2[Recipe: Meetup Create<br/>rcp_kHJoI1WmR3AR]
         R3[Recipe: Partiful Create<br/>rcp_bN7jRF5P_Kf0]
         R4[Recipe: Social Promotion<br/>rcp_X65IirgPhwh3]
+        R5[Recipe: Social Post<br/>rcp_PLACEHOLDER]
     end
 
     subgraph Browser["Browser Automation"]
@@ -98,6 +100,8 @@ flowchart LR
     R1 & R2 & R3 --> AI
     R4 --> APIs
     R4 --> AI
+    R5 --> APIs
+    R5 --> AI
 ```
 
 ## Prerequisites
@@ -418,12 +422,14 @@ CCP-Digital-Marketing/
 ├── docs/
 │   ├── event-creation.md        # Detailed event creation docs
 │   ├── social-promotion.md      # Detailed social promotion docs
+│   ├── social-post.md           # Detailed generic social post docs
 │   └── troubleshooting.md       # Common issues & solutions
 ├── recipes/
 │   ├── luma_create_event.py     # Luma event creation recipe (Hyperbrowser + browser_tool)
 │   ├── meetup_create_event.py   # Meetup event creation recipe (Hyperbrowser + browser_tool)
 │   ├── partiful_create_event.py # Partiful event creation recipe (Hyperbrowser + browser_tool)
-│   ├── social_promotion.py      # Social promotion recipe
+│   ├── social_promotion.py      # Social promotion recipe (event-specific)
+│   ├── social_post.py           # Generic social post recipe
 │   └── auth_setup.py            # Hyperbrowser auth profile setup
 ├── scripts/
 │   ├── recipe_client.py         # CLI client for recipe execution
@@ -434,7 +440,8 @@ CCP-Digital-Marketing/
 │   ├── luma-create/             # Luma event creation skill
 │   ├── meetup-create/           # Meetup event creation skill
 │   ├── partiful-create/         # Partiful event creation skill
-│   ├── social-promote/          # Social promotion skill
+│   ├── social-promote/          # Social promotion skill (event-specific)
+│   ├── social-post/             # Generic social post skill
 │   └── full-workflow/           # Full workflow orchestration skill
 └── .gitignore
 ```

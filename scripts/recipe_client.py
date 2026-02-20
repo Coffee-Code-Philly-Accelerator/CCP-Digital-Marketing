@@ -9,11 +9,13 @@ Recipes:
 - Create Event on Meetup (rcp_kHJoI1WmR3AR)
 - Create Event on Partiful (rcp_bN7jRF5P_Kf0)
 - Event Social Promotion (rcp_X65IirgPhwh3)
+- Generic Social Post (rcp_PLACEHOLDER)
 
 Usage:
     python recipe_client.py create-event --title "AI Workshop" --date "Jan 25, 2025" ...
     python recipe_client.py promote --title "AI Workshop" --url "https://lu.ma/abc123" ...
     python recipe_client.py full-workflow --title "AI Workshop" --date "Jan 25, 2025" ...
+    python recipe_client.py social-post --topic "News" --content "Big announcement!" ...
 
 Environment:
     COMPOSIO_API_KEY - Your Composio API key (required)
@@ -49,6 +51,7 @@ RECIPE_IDS = {
     "meetup_create": "rcp_kHJoI1WmR3AR",
     "partiful_create": "rcp_bN7jRF5P_Kf0",
     "social_promotion": "rcp_X65IirgPhwh3",
+    "social_post": "rcp_PLACEHOLDER",
 }
 
 EVENT_PLATFORMS = ["luma", "meetup", "partiful"]
@@ -394,6 +397,57 @@ def full_workflow(
     }
 
 
+def post_to_social(
+    client: ComposioRecipeClient,
+    topic: str,
+    content: str,
+    url: str = "",
+    image_url: str = "",
+    image_prompt: str = "",
+    tone: str = "",
+    cta: str = "",
+    hashtags: str = "",
+    discord_channel_id: str = "",
+    facebook_page_id: str = "",
+    skip_platforms: str = "",
+) -> Dict[str, Any]:
+    """
+    Post generic content to social media platforms.
+
+    Args:
+        client: ComposioRecipeClient instance
+        topic: What the post is about
+        content: Main message/body text
+        url: Link to include in posts
+        image_url: Reuse existing image (skips Gemini)
+        image_prompt: Custom Gemini prompt for image generation
+        tone: Style: engaging, professional, casual, excited, informative
+        cta: Call-to-action text
+        hashtags: Custom hashtags to include
+        discord_channel_id: Discord channel ID
+        facebook_page_id: Facebook page ID
+        skip_platforms: Comma-separated platforms to skip
+
+    Returns:
+        Recipe execution result with post confirmations
+    """
+    input_data = {
+        "topic": topic,
+        "content": content,
+        "url": url,
+        "image_url": image_url,
+        "image_prompt": image_prompt,
+        "tone": tone,
+        "cta": cta,
+        "hashtags": hashtags,
+        "discord_channel_id": discord_channel_id,
+        "facebook_page_id": facebook_page_id,
+        "skip_platforms": skip_platforms,
+    }
+
+    return client.execute_recipe(RECIPE_IDS["social_post"], input_data)
+
+
 # =============================================================================
 # CLI Interface
 # =============================================================================
@@ -431,6 +485,13 @@ Examples:
     --description "Join us..." \\
     --meetup-url "https://www.meetup.com/code-coffee-philly"
 
+  # Generic social post (not event-specific)
+  python recipe_client.py social-post \\
+    --topic "New Partnership" \\
+    --content "We're partnering with TechHub!" \\
+    --url "https://example.com" \\
+    --tone "excited"
+
   # Get recipe info
   python recipe_client.py info --recipe all
 
@@ -439,6 +500,7 @@ Recipes:
   meetup_create     rcp_kHJoI1WmR3AR  Create event on Meetup
   partiful_create   rcp_bN7jRF5P_Kf0  Create event on Partiful
   social_promotion  rcp_X65IirgPhwh3  Promote event on social media
+  social_post       rcp_PLACEHOLDER   Generic social media post
 
 Environment Variables:
   COMPOSIO_API_KEY    Your Composio API key (required)
@@ -479,9 +541,23 @@ Environment Variables:
     full_parser.add_argument("--skip", default="", help="Platforms to skip")
     full_parser.add_argument("--provider", choices=["hyperbrowser", "browser_tool"], default="hyperbrowser", help="Browser automation provider")
 
+    # social-post command
+    social_post_parser = subparsers.add_parser("social-post", help="Post generic content to social media")
+    social_post_parser.add_argument("--topic", required=True, help="What the post is about")
+    social_post_parser.add_argument("--content", required=True, help="Main message/body text")
+    social_post_parser.add_argument("--url", default="", help="Link to include in posts")
+    social_post_parser.add_argument("--image-url", default="", help="Reuse existing image URL (skips Gemini)")
+    social_post_parser.add_argument("--image-prompt", default="", help="Custom Gemini prompt for image generation")
+    social_post_parser.add_argument("--tone", default="", help="Style: engaging, professional, casual, excited, informative")
+    social_post_parser.add_argument("--cta", default="", help="Call-to-action text")
+    social_post_parser.add_argument("--hashtags", default="", help="Custom hashtags to include")
+    social_post_parser.add_argument("--discord-channel", default="", help="Discord channel ID")
+    social_post_parser.add_argument("--facebook-page", default="", help="Facebook page ID")
+    social_post_parser.add_argument("--skip", default="", help="Platforms to skip")
+
     # info command
     info_parser = subparsers.add_parser("info", help="Get recipe information")
-    info_parser.add_argument("--recipe", choices=["luma", "meetup", "partiful", "promote", "all"], default="all")
+    info_parser.add_argument("--recipe", choices=["luma", "meetup", "partiful", "promote", "social-post", "all"], default="all")
 
     args = parser.parse_args()
 
@@ -538,6 +614,21 @@ Environment Variables:
             skip_platforms=args.skip,
             provider=args.provider,
         )
+    elif args.command == "social-post":
+        result = post_to_social(
+            client=client,
+            topic=args.topic,
+            content=args.content,
+            url=args.url,
+            image_url=args.image_url,
+            image_prompt=args.image_prompt,
+            tone=args.tone,
+            cta=args.cta,
+            hashtags=args.hashtags,
+            discord_channel_id=args.discord_channel,
+            facebook_page_id=args.facebook_page,
+            skip_platforms=args.skip,
+        )
     elif args.command == "info":
         if args.recipe in ("luma", "all"):
             print("\n--- Luma Create Event Recipe ---")
@@ -551,6 +642,9 @@ Environment Variables:
         if args.recipe in ("promote", "all"):
             print("\n--- Social Promotion Recipe ---")
             print(json.dumps(client.get_recipe_details(RECIPE_IDS["social_promotion"]), indent=2))
+        if args.recipe in ("social-post", "all"):
+            print("\n--- Generic Social Post Recipe ---")
+            print(json.dumps(client.get_recipe_details(RECIPE_IDS["social_post"]), indent=2))
         sys.exit(0)
 
     # Print result
