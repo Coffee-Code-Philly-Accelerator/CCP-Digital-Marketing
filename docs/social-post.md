@@ -1,6 +1,6 @@
 # Generic Social Post Recipe - Detailed Documentation
 
-**Recipe ID:** `rcp_PLACEHOLDER`
+**Recipe ID:** `rcp_3LheyoNQpiFK`
 **Recipe URL:** [View on Rube](https://rube.app)
 
 ## Overview
@@ -208,7 +208,7 @@ Guidelines:
 
 ```python
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_PLACEHOLDER",
+    recipe_id="rcp_3LheyoNQpiFK",
     input_data={
         "topic": "New Community Partnership",
         "content": "We're excited to announce our partnership with TechHub Philly! This brings new co-working spaces, mentorship programs, and networking opportunities to our community.",
@@ -225,7 +225,7 @@ RUBE_EXECUTE_RECIPE(
 
 ```python
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_PLACEHOLDER",
+    recipe_id="rcp_3LheyoNQpiFK",
     input_data={
         "topic": "Claude 4 Release",
         "content": "Anthropic just released Claude 4 with groundbreaking capabilities. Here's what it means for our community of developers building AI applications.",
@@ -240,7 +240,7 @@ RUBE_EXECUTE_RECIPE(
 
 ```python
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_PLACEHOLDER",
+    recipe_id="rcp_3LheyoNQpiFK",
     input_data={
         "topic": "Thank You to Our Sponsors",
         "content": "A huge thank you to our amazing sponsors who make Code Coffee Philly possible. Your support fuels innovation and community growth.",
@@ -255,7 +255,7 @@ RUBE_EXECUTE_RECIPE(
 
 ```python
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_PLACEHOLDER",
+    recipe_id="rcp_3LheyoNQpiFK",
     input_data={
         "topic": "Quick Update",
         "content": "New meetup location starting next month!",
@@ -268,7 +268,7 @@ RUBE_EXECUTE_RECIPE(
 
 | Feature | Social Post (this recipe) | Social Promotion |
 |---------|---------------------------|------------------|
-| Recipe ID | `rcp_PLACEHOLDER` | `rcp_X65IirgPhwh3` |
+| Recipe ID | `rcp_3LheyoNQpiFK` | `rcp_X65IirgPhwh3` |
 | Use case | General content | Event promotion |
 | Required inputs | `topic`, `content` | `event_title`, `event_date`, `event_time`, `event_location`, `event_description`, `event_url` |
 | URL handling | Optional, generic | Required, labeled "RSVP" |

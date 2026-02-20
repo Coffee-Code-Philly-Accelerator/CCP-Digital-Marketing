@@ -1,6 +1,6 @@
 """
 RECIPE: Generic Social Post
-RECIPE ID: rcp_PLACEHOLDER
+RECIPE ID: rcp_3LheyoNQpiFK
 
 FLOW: Topic + Content > Gemini Image > LLM Copy > Sequential Social Posting
 

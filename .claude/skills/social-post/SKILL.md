@@ -42,7 +42,7 @@ Use the Rube MCP tool to execute the generic social post recipe:
 
 ```
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_PLACEHOLDER",
+    recipe_id="rcp_3LheyoNQpiFK",
     input_data={
         "topic": "<topic>",
         "content": "<content>",
@@ -91,7 +91,7 @@ The recipe returns:
 ### Community Update
 ```
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_PLACEHOLDER",
+    recipe_id="rcp_3LheyoNQpiFK",
     input_data={
         "topic": "New Community Partnership",
         "content": "We're excited to announce our partnership with TechHub Philly! This collaboration brings new resources and networking opportunities to our community.",
@@ -105,7 +105,7 @@ RUBE_EXECUTE_RECIPE(
 ### Tech News Share
 ```
 RUBE_EXECUTE_RECIPE(
-    recipe_id="rcp_PLACEHOLDER",
+    recipe_id="rcp_3LheyoNQpiFK",
     input_data={
         "topic": "Claude 4 Release",
         "content": "Anthropic just released Claude 4 with groundbreaking reasoning capabilities. Here's what it means for developers building AI applications.",

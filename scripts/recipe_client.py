@@ -9,7 +9,7 @@ Recipes:
 - Create Event on Meetup (rcp_kHJoI1WmR3AR)
 - Create Event on Partiful (rcp_bN7jRF5P_Kf0)
 - Event Social Promotion (rcp_X65IirgPhwh3)
-- Generic Social Post (rcp_PLACEHOLDER)
+- Generic Social Post (rcp_3LheyoNQpiFK)
 
 Usage:
     python recipe_client.py create-event --title "AI Workshop" --date "Jan 25, 2025" ...
@@ -51,7 +51,7 @@ RECIPE_IDS = {
     "meetup_create": "rcp_kHJoI1WmR3AR",
     "partiful_create": "rcp_bN7jRF5P_Kf0",
     "social_promotion": "rcp_X65IirgPhwh3",
-    "social_post": "rcp_PLACEHOLDER",
+    "social_post": "rcp_3LheyoNQpiFK",
 }
 
 EVENT_PLATFORMS = ["luma", "meetup", "partiful"]
@@ -500,7 +500,7 @@ Recipes:
   meetup_create     rcp_kHJoI1WmR3AR  Create event on Meetup
   partiful_create   rcp_bN7jRF5P_Kf0  Create event on Partiful
   social_promotion  rcp_X65IirgPhwh3  Promote event on social media
-  social_post       rcp_PLACEHOLDER   Generic social media post
+  social_post       rcp_3LheyoNQpiFK   Generic social media post
 
 Environment Variables:
   COMPOSIO_API_KEY    Your Composio API key (required)
