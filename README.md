@@ -67,7 +67,7 @@ flowchart LR
         R2[Recipe: Meetup Create<br/>rcp_kHJoI1WmR3AR]
         R3[Recipe: Partiful Create<br/>rcp_bN7jRF5P_Kf0]
         R4[Recipe: Social Promotion<br/>rcp_X65IirgPhwh3]
-        R5[Recipe: Social Post<br/>rcp_PLACEHOLDER]
+        R5[Recipe: Social Post<br/>rcp_3LheyoNQpiFK]
     end
 
     subgraph Browser["Browser Automation"]
@@ -142,9 +142,44 @@ flowchart LR
 ### Option 2: Via Claude Code with Rube MCP
 
 ```bash
-# In Claude Code with Rube MCP connected
+# Event creation + promotion
 "Create an event titled 'AI Workshop' on January 25, 2025 at 6 PM
 at The Station, Philadelphia. Then promote it on all social platforms."
+
+# Generic social post (no event needed)
+"Post to social media about our new partnership with TechHub Philly.
+Include link https://example.com and use an excited tone."
+```
+
+### Option 3: Via CLI
+
+```bash
+pip install -r scripts/requirements.txt
+export COMPOSIO_API_KEY='your-key'
+
+# Create event on all platforms
+python scripts/recipe_client.py create-event \
+  --title "AI Workshop" --date "January 25, 2025" --time "6:00 PM EST" \
+  --location "The Station, Philadelphia" --description "Join us for..."
+
+# Promote event on social media
+python scripts/recipe_client.py promote \
+  --title "AI Workshop" --date "January 25, 2025" --time "6:00 PM EST" \
+  --location "The Station, Philadelphia" --description "Join us for..." \
+  --event-url "https://lu.ma/abc123"
+
+# Full workflow (create + promote)
+python scripts/recipe_client.py full-workflow \
+  --title "AI Workshop" --date "January 25, 2025" --time "6:00 PM EST" \
+  --location "The Station, Philadelphia" --description "Join us for..."
+
+# Generic social post (not event-specific)
+python scripts/recipe_client.py social-post \
+  --topic "New Partnership" --content "We're partnering with TechHub!" \
+  --url "https://example.com" --tone "excited"
+
+# Get recipe info
+python scripts/recipe_client.py info --recipe all
 ```
 
 ## Recipes
@@ -308,6 +343,99 @@ sequenceDiagram
 
 ---
 
+### Recipe 5: Generic Social Post
+
+**Recipe ID:** `rcp_3LheyoNQpiFK`
+**Recipe URL:** [View on Rube](https://rube.app/recipe-hub/generic-social-post)
+
+Posts any content (not event-specific) to social platforms with AI-generated images and platform-optimized copy. Use for community updates, tech news, sponsor shout-outs, recaps, or announcements.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant R as Recipe
+    participant G as Gemini AI
+    participant L as LLM
+    participant Li as LinkedIn
+    participant I as Instagram
+    participant F as Facebook
+    participant D as Discord
+
+    U->>R: Topic + Content + Options
+    R->>G: Generate image (or reuse provided URL)
+    G-->>R: Image URL
+    R->>L: Generate platform-specific copy
+    L-->>R: 5 optimized posts
+
+    R->>Li: Post to LinkedIn
+    Li-->>R: Post URN
+    R->>I: Post to Instagram
+    I-->>R: Media ID
+    R->>F: Post to Page
+    F-->>R: Post ID
+    R->>D: Send to channel
+    D-->>R: Message ID
+
+    R-->>U: All post confirmations
+```
+
+#### Input Parameters
+
+| Parameter | Required | Description | Example |
+|-----------|----------|-------------|---------|
+| `topic` | Yes | What the post is about | "New Community Partnership" |
+| `content` | Yes | Main message/body text | "We're excited to announce..." |
+| `url` | No | Link to include in posts | "https://example.com" |
+| `cta` | No | Call-to-action text | "Learn more", "Join us" |
+| `image_url` | No | Reuse existing image (skips Gemini) | "https://..." |
+| `image_prompt` | No | Custom Gemini image prompt | "Create a warm thank-you graphic..." |
+| `tone` | No | Post style (default: "engaging") | "professional", "casual", "excited", "informative" |
+| `hashtags` | No | Custom hashtags | "#AI #Tech #Community" |
+| `discord_channel_id` | No | Discord channel ID | "1234567890" |
+| `facebook_page_id` | No | Facebook page ID | "9876543210" |
+| `skip_platforms` | No | Platforms to skip (comma-separated) | "twitter,facebook" |
+
+#### Output
+
+```json
+{
+  "twitter_posted": "skipped: connection not available",
+  "linkedin_posted": "success|skipped|failed: <error>",
+  "instagram_posted": "success|skipped: No image available|failed: <error>",
+  "facebook_posted": "success|skipped: No page ID provided|failed: <error>",
+  "discord_posted": "success|skipped: No channel ID provided|failed: <error>",
+  "image_url": "https://...",
+  "summary": "Posted to N/5 platforms"
+}
+```
+
+#### Differences from Event Social Promotion
+
+| | Generic Social Post | Event Social Promotion |
+|---|---|---|
+| Recipe ID | `rcp_3LheyoNQpiFK` | `rcp_X65IirgPhwh3` |
+| Use case | Any content | Event announcements |
+| Required inputs | `topic`, `content` | `event_title`, `event_date`, `event_time`, `event_location`, `event_description`, `event_url` |
+| Tone control | Yes (`tone` param) | No |
+| Custom image prompt | Yes (`image_prompt` param) | No |
+| CTA support | Yes (`cta` param) | No |
+| Hashtag control | Yes (`hashtags` param) | No |
+| URL label in posts | Generic (no label) | "RSVP: {url}" |
+
+---
+
+## Recipe Summary
+
+| # | Recipe | ID | Use Case | Input |
+|---|--------|----|----------|-------|
+| 1 | Luma Create Event | `rcp_mXyFyALaEsQF` | Create event on lu.ma | Event details |
+| 2 | Meetup Create Event | `rcp_kHJoI1WmR3AR` | Create event on Meetup | Event details |
+| 3 | Partiful Create Event | `rcp_bN7jRF5P_Kf0` | Create event on Partiful | Event details |
+| 4 | Event Social Promotion | `rcp_X65IirgPhwh3` | Promote event on social media | Event details + URL |
+| 5 | Generic Social Post | `rcp_3LheyoNQpiFK` | Post any content to social media | Topic + content |
+
+---
+
 ## Combined Workflow
 
 For a complete event launch, run event creation recipes sequentially, then social promotion:
@@ -336,6 +464,31 @@ flowchart TD
         I & J & K & L & M --> N[All URLs & Post IDs<br/>Stored for tracking]
     end
 ```
+
+## Standalone Social Posting
+
+For non-event content, use Recipe 5 directly — no event creation needed:
+
+```mermaid
+flowchart TD
+    A[User provides topic + content] --> B{Image provided?}
+    B -->|Yes| D[Use provided image]
+    B -->|No| C[Gemini generates image]
+    C --> D
+    D --> E[LLM generates platform-specific copy]
+    E --> F[Post to LinkedIn]
+    E --> G[Post to Instagram]
+    E --> H[Post to Facebook]
+    E --> I[Post to Discord]
+    F & G & H & I --> J[Return results summary]
+```
+
+**Example use cases:**
+- Community updates: "We just hit 500 members!"
+- Tech news: "Claude 4 just dropped — here's what it means for developers"
+- Sponsor shout-outs: "Thanks to TechHub for hosting us"
+- Recaps: "Great turnout at last night's meetup"
+- Announcements: "New co-working space partnership"
 
 ## Platform Connection Status
 
