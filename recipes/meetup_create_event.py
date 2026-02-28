@@ -74,6 +74,7 @@ event_date = sanitize_input(os.environ.get("event_date"), max_len=100)
 event_time = sanitize_input(os.environ.get("event_time"), max_len=100)
 event_location = sanitize_input(os.environ.get("event_location"), max_len=500)
 event_description = sanitize_input(os.environ.get("event_description"), max_len=5000)
+event_image_url = os.environ.get("event_image_url", "")
 
 if not all([event_title, event_date, event_time, event_location, event_description]):
     raise ValueError("Missing required inputs: event_title, event_date, event_time, event_location, event_description")
@@ -95,14 +96,24 @@ def extract_data(result):
 
 
 # Step 1: Create browser automation task
-task_description = f"""Create a new event on Meetup for the Coffee Code Philly Accelerator group. Fill in the event creation form with these exact details:
+base_steps = f"""Create a new event on Meetup for the Coffee Code Philly Accelerator group. Fill in the event creation form with these exact details:
 
 1. Find the event title/name field, click it, and type: {event_title}. Wait 2 seconds.
 2. Find and click the date field or date picker, then select: {event_date}. Wait 2 seconds.
 3. Find the start time field, click it, and enter: {event_time}. Wait 2 seconds.
 4. Find the venue/location field, click it, type: {event_location}, and select from suggestions or press Enter. Wait 2 seconds.
-5. Find the description or 'about this event' field, click it, and type: {event_description}. Wait 2 seconds.
-6. Click the 'Publish' or 'Schedule Event' or 'Create Event' button. Wait for the page to navigate.
+5. Find the description or 'about this event' field, click it, and type: {event_description}. Wait 2 seconds."""
+
+image_steps = ""
+if event_image_url:
+    image_steps = f"""
+6. BEFORE publishing, upload a featured photo: Find the 'Featured photo' section or 'Add a photo' button. Wait 2 seconds. Look for an option to import from URL or paste a link, and use this URL: {event_image_url}
+   If there is no URL import option, skip the image upload and continue to publish.
+   Wait 2 seconds after the image uploads."""
+
+publish_step = 7 if event_image_url else 6
+task_description = base_steps + image_steps + f"""
+{publish_step}. Click the 'Publish' or 'Schedule Event' or 'Create Event' button. Wait for the page to navigate.
 
 IMPORTANT: Wait 2 seconds between each action to avoid triggering Meetup's anti-bot detection.
 IMPORTANT: After clicking Publish, wait for the URL to change from /create to the new event URL before finishing."""
@@ -173,6 +184,7 @@ output = {
     "provider": browser_provider,
     "poll_tool": poll_tool,
     "poll_args_key": poll_args_key,
+    "event_image_url": event_image_url,
 }
 
 print(f"[{datetime.utcnow().isoformat()}] Task started. Caller should poll {poll_tool} with {poll_args_key}={task_id}")

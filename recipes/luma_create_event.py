@@ -69,6 +69,7 @@ event_date = sanitize_input(os.environ.get("event_date"), max_len=100)
 event_time = sanitize_input(os.environ.get("event_time"), max_len=100)
 event_location = sanitize_input(os.environ.get("event_location"), max_len=500)
 event_description = sanitize_input(os.environ.get("event_description"), max_len=5000)
+event_image_url = os.environ.get("event_image_url", "")
 luma_create_url = os.environ.get("luma_create_url", "https://lu.ma/create")
 
 if not all([event_title, event_date, event_time, event_location, event_description]):
@@ -90,16 +91,26 @@ def extract_data(result):
     return data if isinstance(data, dict) else {}
 
 
-task_description = f"""Create a new event on Luma (lu.ma) with these exact details:
+base_steps = f"""Create a new event on Luma (lu.ma) with these exact details:
 
 1. Find the event title field (may say 'Event Title' or 'Untitled Event'), click it, clear any existing text, and type exactly: {event_title}
 2. Click the date field to open the date picker and select: {event_date}. Wait 2 seconds after selecting for the React date picker to update.
 3. Find and click the time field, then enter: {event_time}
 4. Click the location/venue field, type: {event_location}, and select from the dropdown suggestions or press Enter
-5. Click the description field (may say 'Add a description'), and type: {event_description}
-6. Click the 'Publish' or 'Create Event' button to publish the event
-7. If a share modal or popup appears after publishing, dismiss it by clicking X, Skip, or outside the modal
-8. Wait for the page to navigate to the new event page
+5. Click the description field (may say 'Add a description'), and type: {event_description}"""
+
+image_steps = ""
+if event_image_url:
+    image_steps = f"""
+6. BEFORE publishing, upload the cover image: Click the 'Add cover' button at the top of the form. Look for an option to import from URL or paste a link, and use this URL: {event_image_url}
+   If there is no URL import option, skip the image upload and continue to publish.
+   Wait 2 seconds after the image uploads."""
+
+publish_step = 7 if event_image_url else 6
+task_description = base_steps + image_steps + f"""
+{publish_step}. Click the 'Publish' or 'Create Event' button to publish the event
+{publish_step + 1}. If a share modal or popup appears after publishing, dismiss it by clicking X, Skip, or outside the modal
+{publish_step + 2}. Wait for the page to navigate to the new event page
 
 IMPORTANT: After clicking Publish, wait for the URL to change from lu.ma/create to the new event URL before finishing. The final URL should look like lu.ma/something (not /create or /home)."""
 
@@ -168,6 +179,7 @@ output = {
     "provider": browser_provider,
     "poll_tool": poll_tool,
     "poll_args_key": poll_args_key,
+    "event_image_url": event_image_url,
 }
 
 print(f"[{datetime.utcnow().isoformat()}] Task started. Caller should poll {poll_tool} with {poll_args_key}={task_id}")

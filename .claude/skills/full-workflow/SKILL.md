@@ -1,6 +1,6 @@
 # full-workflow
 
-Create an event on all platforms (Luma, Meetup, Partiful) and promote it on social media.
+Stage, create, and promote an event across all platforms. Three-phase workflow: content staging (review gate) -> event creation (Luma, Meetup, Partiful) -> social promotion (Twitter, LinkedIn, Instagram, Facebook, Discord).
 
 ## Invocation
 
@@ -28,6 +28,7 @@ This skill is triggered when the user wants to:
 | `facebook_page_id` | string | "" | Facebook page for social promotion |
 | `skip_event_platforms` | string | "" | Comma-separated event platforms to skip, e.g., "meetup,partiful" |
 | `skip_social_platforms` | string | "" | Comma-separated social platforms to skip, e.g., "facebook,discord" |
+| `skip_staging` | boolean | `false` | Skip content staging/review and use `event_description` as-is (original behavior) |
 
 ## Prerequisites
 
@@ -35,11 +36,26 @@ Before running, ensure all platform profiles are set up via the **auth-setup** s
 
 ## Execution
 
-This is an orchestration skill. Execute the following 4 recipes **sequentially** (browser sessions cannot overlap). After all event creation is done, run social promotion.
+This is an orchestration skill with 3 phases: content staging, event creation, and social promotion. Execute sequentially (browser sessions cannot overlap).
+
+### Phase 0: Content Staging (default ON)
+
+**When `skip_staging` is false (default):** Run the stage-event flow before creating events.
+
+1. Generate 3 platform-specific descriptions from the user's input (see stage-event SKILL.md Phase 1)
+2. Generate a promotional image via `RUBE_MULTI_EXECUTE_TOOL(tool_slug="GEMINI_GENERATE_IMAGE", ...)`
+3. Present preview to user and wait for approval/edits (see stage-event SKILL.md Phase 2)
+4. After approval, carry forward:
+   - `luma_description` - approved Luma-specific description
+   - `meetup_description` - approved Meetup-specific description
+   - `partiful_description` - approved Partiful-specific description
+   - `image_url` - approved promotional image URL
+
+**When `skip_staging` is true:** Use `event_description` as-is for all platforms (original behavior). No image is pre-generated.
 
 ### Phase 1: Event Creation (sequential)
 
-Run each platform unless it appears in `skip_event_platforms`. Collect `event_url` and `image_url` from each successful result.
+Run each platform unless it appears in `skip_event_platforms`. Pass platform-specific descriptions from staging (or `event_description` if staging was skipped). Collect `event_url` from each successful result.
 
 **Step 1 - Luma** (unless skipped):
 ```
@@ -50,7 +66,8 @@ RUBE_EXECUTE_RECIPE(
         "event_date": "<date>",
         "event_time": "<time>",
         "event_location": "<location>",
-        "event_description": "<description>"
+        "event_description": "<luma_description or event_description>",
+        "event_image_url": "<image_url from staging>"
     }
 )
 ```
@@ -64,7 +81,8 @@ RUBE_EXECUTE_RECIPE(
         "event_date": "<date>",
         "event_time": "<time>",
         "event_location": "<location>",
-        "event_description": "<description>"
+        "event_description": "<meetup_description or event_description>",
+        "event_image_url": "<image_url from staging>"
     }
 )
 ```
@@ -78,7 +96,8 @@ RUBE_EXECUTE_RECIPE(
         "event_date": "<date>",
         "event_time": "<time>",
         "event_location": "<location>",
-        "event_description": "<description>"
+        "event_description": "<partiful_description or event_description>",
+        "event_image_url": "<image_url from staging>"
     }
 )
 ```
@@ -122,11 +141,11 @@ Select the **primary event URL** for social promotion using this priority order 
 2. Meetup URL (if available)
 3. Partiful URL (if available)
 
-Also reuse the `image_url` from the first successful platform to avoid redundant Gemini calls.
+If staging was used, pass the `image_url` from Phase 0 to social promotion (skips redundant Gemini generation). If staging was skipped, reuse the `image_url` from the first successful platform.
 
 ### Phase 2: Social Promotion
 
-After all event creation steps complete, run social promotion with the primary URL and image:
+After all event creation steps complete, run social promotion with the primary URL and staged image:
 
 **Step 4 - Social Promotion**:
 ```
@@ -139,7 +158,7 @@ RUBE_EXECUTE_RECIPE(
         "event_location": "<location>",
         "event_description": "<description>",
         "event_url": "<primary event URL from Phase 1>",
-        "image_url": "<image URL from Phase 1>",
+        "image_url": "<image_url from Phase 0 staging, or from Phase 1>",
         "discord_channel_id": "<optional>",
         "facebook_page_id": "<optional>",
         "skip_platforms": "<skip_social_platforms value>"
@@ -169,8 +188,10 @@ Primary event URL: https://lu.ma/abc123
 
 ## Platform Notes
 
+- **Content staging is default ON** - users review AI-generated descriptions and promotional image before events are created. Set `skip_staging=true` to bypass.
+- **Platform-specific descriptions** - staging generates tailored descriptions: Luma (markdown), Meetup (plaintext), Partiful (casual/emoji). Without staging, all platforms get the same `event_description`.
 - **Event creation is sequential** - browser automation sessions cannot overlap
 - **Social promotion runs in parallel internally** - the recipe handles parallelism via ThreadPoolExecutor
-- **Image reuse** - the `image_url` from the first successful event creation is passed to social promotion, skipping redundant Gemini generation
+- **Image reuse** - the `image_url` from staging (or first successful event creation if staging was skipped) is passed to social promotion, skipping redundant Gemini generation
 - **Partial success is OK** - if one event platform fails, the workflow continues with remaining platforms and proceeds to social promotion with whatever URLs are available
 - **Browser provider** - defaults to Hyperbrowser with persistent profiles. Ensure auth-setup has been run for each platform before starting.

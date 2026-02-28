@@ -27,6 +27,7 @@ This skill is triggered when the user wants to:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `meetup_group_url` | string | `https://www.meetup.com/code-coffee-philly` | Override the Meetup group URL |
+| `event_image_url` | string | `""` | URL of image to upload as event featured photo |
 
 ## Execution (Two-Phase)
 
@@ -40,7 +41,8 @@ RUBE_EXECUTE_RECIPE(
         "event_date": "<date>",
         "event_time": "<time>",
         "event_location": "<location>",
-        "event_description": "<description>"
+        "event_description": "<description>",
+        "event_image_url": "<optional>"
     }
 )
 ```
@@ -103,6 +105,7 @@ Check the response:
 
 - **Architecture**: Fire-and-forget recipe + caller-side polling (avoids 4-min Rube timeout)
 - **Browser Provider**: Defaults to Hyperbrowser with persistent profiles for saved auth. Falls back to Composio browser_tool if configured. Requires auth-setup skill to be run first for Hyperbrowser.
+- **Image Upload**: When `event_image_url` is provided, the browser agent uploads it as a "Featured photo" before publishing (with 2s anti-bot waits). Gracefully skips if no URL import option is available.
 - **Anti-Bot Delays**: Meetup has aggressive bot detection. Task instructions include 2s waits between each form action.
 - **Group URL**: Defaults to `https://www.meetup.com/code-coffee-philly`. Override via `meetup_group_url` input.
 - **Apostrophes**: Automatically converted to curly quotes (\u2019) to avoid Rube env var injection issues. No manual workaround needed.

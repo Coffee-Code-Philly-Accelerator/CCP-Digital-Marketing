@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CCP Digital Marketing automates event creation and social media promotion for Coffee Code Philly Accelerator using Rube MCP (Composio).
 
-**Two-phase workflow:**
-1. **Event Creation** - Browser automation for Luma, Meetup, Partiful (no public APIs)
-2. **Social Promotion** - Direct API integrations for Twitter, LinkedIn, Instagram, Facebook, Discord
+**Three-phase workflow:**
+1. **Content Staging** - AI generates platform-specific descriptions + promotional image; user reviews/edits before publishing
+2. **Event Creation** - Browser automation for Luma, Meetup, Partiful (no public APIs)
+3. **Social Promotion** - Direct API integrations for Twitter, LinkedIn, Instagram, Facebook, Discord
 
 ## Development Commands
 
@@ -118,6 +119,7 @@ All event creation recipes default to Hyperbrowser (`HYPERBROWSER_START_BROWSER_
 | Meetup | Anti-bot detection | Task instructions include 2s waits between all form actions |
 | Partiful | Share modal after creation | Task instructions dismiss modal before URL extraction |
 | All | Session expiry | Browser task navigates to login page; recipe reports failure |
+| All | Image upload via URL | Browser agent attempts URL import; gracefully skips if not available |
 
 ## Browser Provider Configuration
 
@@ -209,7 +211,8 @@ Skills are defined in `.claude/skills/`. Each wraps a `RUBE_EXECUTE_RECIPE` call
 | Partiful Create | `partiful-create/` | `rcp_bN7jRF5P_Kf0` | Create event on Partiful via browser automation |
 | Social Promote | `social-promote/` | `rcp_X65IirgPhwh3` | Post event to Twitter, LinkedIn, Instagram, Facebook, Discord |
 | Social Post | `social-post/` | `rcp_3LheyoNQpiFK` | Post generic content (non-event) to social media platforms |
-| Full Workflow | `full-workflow/` | All of the above | Orchestrate: create on all platforms, then promote on social media |
+| Stage Event | `stage-event/` | N/A (Claude + GEMINI) | Generate platform-specific descriptions + image, preview for user review |
+| Full Workflow | `full-workflow/` | All of the above | Orchestrate: stage content, create on all platforms, then promote on social media |
 | Auth Setup | `auth-setup/` | N/A (direct tool calls) | Set up Hyperbrowser persistent auth profiles |
 
 **Chaining:** The social-promote and full-workflow skills accept an optional `image_url` input. When provided (e.g., from a prior event creation), the social promotion recipe skips Gemini image generation and reuses the existing image.

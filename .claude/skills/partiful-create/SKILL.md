@@ -27,6 +27,7 @@ This skill is triggered when the user wants to:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `partiful_create_url` | string | `https://partiful.com/create` | Override the Partiful create page URL |
+| `event_image_url` | string | `""` | URL of image to upload as event cover photo |
 
 ## Execution (Two-Phase)
 
@@ -40,7 +41,8 @@ RUBE_EXECUTE_RECIPE(
         "event_date": "<date>",
         "event_time": "<time>",
         "event_location": "<location>",
-        "event_description": "<description>"
+        "event_description": "<description>",
+        "event_image_url": "<optional>"
     }
 )
 ```
@@ -103,6 +105,7 @@ Check the response:
 
 - **Architecture**: Fire-and-forget recipe + caller-side polling (avoids 4-min Rube timeout)
 - **Browser Provider**: Defaults to Hyperbrowser with persistent profiles for saved auth. Falls back to Composio browser_tool if configured. Requires auth-setup skill to be run first for Hyperbrowser.
+- **Image Upload**: When `event_image_url` is provided, the browser agent clicks the cover image area at the top of the form and imports from URL before publishing. Gracefully skips if no URL import option is available.
 - **Share Modal**: Partiful shows a share/invite modal after creation. The browser agent dismisses it.
 - **No Recurring Events**: Partiful does not support recurring events.
 - **Apostrophes**: Automatically converted to curly quotes (\u2019) to avoid Rube env var injection issues. No manual workaround needed.

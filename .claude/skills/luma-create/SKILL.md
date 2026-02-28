@@ -25,6 +25,7 @@ This skill is triggered when the user wants to:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `luma_create_url` | string | `https://lu.ma/create` | Override the Luma create page URL |
+| `event_image_url` | string | `""` | URL of image to upload as event cover photo |
 
 ## Execution (Two-Phase)
 
@@ -38,7 +39,8 @@ RUBE_EXECUTE_RECIPE(
         "event_date": "<date>",
         "event_time": "<time>",
         "event_location": "<location>",
-        "event_description": "<description>"
+        "event_description": "<description>",
+        "event_image_url": "<optional>"
     }
 )
 ```
@@ -101,6 +103,7 @@ Check the response:
 
 - **Architecture**: Fire-and-forget recipe + caller-side polling (avoids 4-min Rube timeout)
 - **Browser Provider**: Defaults to Hyperbrowser with persistent profiles for saved auth. Falls back to Composio browser_tool if configured. Requires auth-setup skill to be run first for Hyperbrowser.
+- **Image Upload**: When `event_image_url` is provided, the browser agent clicks the "Add cover" button and imports from URL before publishing. Gracefully skips if no URL import option is available.
 - **Date Picker**: Luma uses a React date picker; task instructions include explicit 2s waits
 - **Share Modal**: After publishing, Luma may show a share modal that the browser agent dismisses
 - **Apostrophes**: Automatically converted to curly quotes (\u2019) to avoid Rube env var injection issues. No manual workaround needed.

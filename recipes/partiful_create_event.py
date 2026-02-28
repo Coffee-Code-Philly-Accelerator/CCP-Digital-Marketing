@@ -70,6 +70,7 @@ event_date = sanitize_input(os.environ.get("event_date"), max_len=100)
 event_time = sanitize_input(os.environ.get("event_time"), max_len=100)
 event_location = sanitize_input(os.environ.get("event_location"), max_len=500)
 event_description = sanitize_input(os.environ.get("event_description"), max_len=5000)
+event_image_url = os.environ.get("event_image_url", "")
 partiful_create_url = os.environ.get("partiful_create_url", "https://partiful.com/create")
 
 if not all([event_title, event_date, event_time, event_location, event_description]):
@@ -91,16 +92,25 @@ def extract_data(result):
     return data if isinstance(data, dict) else {}
 
 
-task_description = f"""Create a new event on Partiful with these exact details:
+base_steps = f"""Create a new event on Partiful with these exact details:
 
 1. Find the event title field (may say 'Untitled Event' or similar), click it, clear any existing text, and type: {event_title}
 2. Click the date field or 'When' section and select: {event_date}
 3. Find the time field and enter: {event_time}
 4. Click the location field or 'Where' section, type: {event_location}, and select from suggestions or press Enter
-5. Click the description or details field and type: {event_description}
-6. Click the 'Save', 'Publish', or 'Create' button to create the event
-7. IMPORTANT: After creation, a share/invite modal will likely appear. Dismiss it by clicking the X button, 'Skip', 'Maybe later', or clicking outside the modal.
-8. Wait for the page to show the created event
+5. Click the description or details field and type: {event_description}"""
+
+image_steps = ""
+if event_image_url:
+    image_steps = f"""
+6. BEFORE publishing, upload the cover image: Click the cover image area at the top of the form. Look for an option to import from URL or paste a link, and use this URL: {event_image_url}
+   If there is no URL import option, skip the image upload and continue to publish."""
+
+publish_step = 7 if event_image_url else 6
+task_description = base_steps + image_steps + f"""
+{publish_step}. Click the 'Save', 'Publish', or 'Create' button to create the event
+{publish_step + 1}. IMPORTANT: After creation, a share/invite modal will likely appear. Dismiss it by clicking the X button, 'Skip', 'Maybe later', or clicking outside the modal.
+{publish_step + 2}. Wait for the page to show the created event
 
 IMPORTANT: After publishing, the URL should change to partiful.com/e/something. If a share modal blocks the view, dismiss it first."""
 
@@ -169,6 +179,7 @@ output = {
     "provider": browser_provider,
     "poll_tool": poll_tool,
     "poll_args_key": poll_args_key,
+    "event_image_url": event_image_url,
 }
 
 print(f"[{datetime.utcnow().isoformat()}] Task started. Caller should poll {poll_tool} with {poll_args_key}={task_id}")
