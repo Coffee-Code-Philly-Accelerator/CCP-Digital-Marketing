@@ -219,6 +219,34 @@ Skills are defined in `.claude/skills/`. Each wraps a `RUBE_EXECUTE_RECIPE` call
 
 ---
 
+## CI/CD: Automated Code Review
+
+GitHub Actions workflow (`.github/workflows/claude.yml`) provides two modes:
+
+### Auto-Review (on every PR)
+
+Triggers on `pull_request: [opened, synchronize, ready_for_review]`. Claude reviews the diff against this file's design principles — Let It Crash, KISS, Pure Functions, SOLID, and recipe patterns. Posts review comments but makes no code changes.
+
+### Interactive @claude (on comment)
+
+Triggers when a PR comment contains `@claude`. Claude can answer questions, explain code, and push fixes directly to the PR branch. Only triggers for non-bot users.
+
+### Setup Requirements
+
+1. Install the Claude GitHub App: `github.com/apps/claude`
+2. Add `ANTHROPIC_API_KEY` as a repository secret (Settings > Secrets and variables > Actions)
+
+### Cost Controls
+
+| Guard | Value |
+|-------|-------|
+| Auto-review max turns | 5 |
+| Interactive max turns | 10 |
+| Bot loop prevention | `sender.type != 'Bot'` check |
+| Fork PR secrets | Not exposed (GitHub default) |
+
+---
+
 # Design Philosophy
 
 > **Instruction to Agent:** Consult the following principles before generating any new classes, functions, or error handling logic.
