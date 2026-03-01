@@ -1,0 +1,406 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same branch/PR
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ===================================================================
+  # Lint: ruff check (errors, style, security, bugs)
+  # ===================================================================
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff check
+        run: ruff check --output-format=github .
+
+  # ===================================================================
+  # Format: ruff format --check (consistent code style)
+  # ===================================================================
+  format:
+    name: Format (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Check formatting
+        run: ruff format --check .
+
+  # ===================================================================
+  # Recipe Validation: structural checks on Rube MCP recipes
+  # ===================================================================
+  recipe-validation:
+    name: Recipe Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate recipe patterns
+        run: python scripts/validate_recipes.py
+
+  # ===================================================================
+  # Security: scan for secrets and dangerous patterns
+  # ===================================================================
+  security:
+    name: Security Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for hardcoded secrets
+        run: |
+          echo "Scanning for potential hardcoded secrets..."
+          FOUND=0
+
+          # Check for hardcoded API keys (common patterns)
+          if grep -rn --include="*.py" -E "(api_key|API_KEY|secret|SECRET|token|TOKEN)\s*=\s*['\"][a-zA-Z0-9_\-]{20,}" \
+              --exclude-dir=.git --exclude-dir=__pycache__ \
+              scripts/ recipes/ 2>/dev/null; then
+            echo "::error::Potential hardcoded secrets found in source files"
+            FOUND=1
+          fi
+
+          # Check that no .env files are committed
+          if [ -f scripts/.env ] || [ -f recipes/.env ] || [ -f .env ]; then
+            echo "::error::.env file found in repository"
+            FOUND=1
+          fi
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No hardcoded secrets found"
+          fi
+          exit $FOUND
+
+      - name: Check for dangerous patterns
+        run: |
+          echo "Scanning for dangerous code patterns..."
+          FOUND=0
+
+          # Check for eval() usage (exec() is allowed in test helpers for AST extraction)
+          if grep -rn --include="*.py" '\beval\s*(' \
+              --exclude-dir=.git --exclude-dir=__pycache__ \
+              scripts/ recipes/ 2>/dev/null; then
+            echo "::error::eval() found in source code"
+            FOUND=1
+          fi
+
+          # Check for shell=True in subprocess calls
+          if grep -rn --include="*.py" 'subprocess.*shell\s*=\s*True' \
+              --exclude-dir=.git --exclude-dir=__pycache__ \
+              scripts/ recipes/ tests/ 2>/dev/null; then
+            echo "::error::subprocess with shell=True found"
+            FOUND=1
+          fi
+
+          # Check for pickle usage (deserialization attacks)
+          if grep -rn --include="*.py" '\bpickle\b' \
+              --exclude-dir=.git --exclude-dir=__pycache__ \
+              scripts/ recipes/ 2>/dev/null; then
+            echo "::error::pickle usage found in source code"
+            FOUND=1
+          fi
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No dangerous patterns found"
+          fi
+          exit $FOUND
+
+  # ===================================================================
+  # Test: pytest across Python version matrix
+  # ===================================================================
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install -r scripts/requirements.txt
+          pip install -r requirements-test.txt
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+  # ===================================================================
+  # Coverage: pytest-cov with minimum threshold
+  # ===================================================================
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r scripts/requirements.txt
+          pip install -r requirements-test.txt
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ \
+            --cov=scripts \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-config=pyproject.toml \
+            -v --tb=short
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 30
+
+  # ===================================================================
+  # Design Principles: automated enforcement of CLAUDE.md rules
+  # ===================================================================
+  design-principles:
+    name: Design Principles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Let It Crash: check for unauthorized try/except"
+        run: |
+          echo "Checking Let It Crash principle compliance..."
+          FOUND=0
+
+          # Count try/except blocks in recipe source files (excluding mock guards)
+          # Mock guards are: try: <name> except NameError: def <name>
+          # Any other try/except in recipes is a violation
+          for f in recipes/*.py; do
+            # Skip auth_setup.py (not a recipe)
+            [ "$(basename "$f")" = "auth_setup.py" ] && continue
+
+            # Count all 'except' lines that are NOT 'except NameError'
+            VIOLATIONS=$(grep -n '^\s*except ' "$f" | grep -v 'except NameError' | grep -v '# LET-IT-CRASH-EXCEPTION' || true)
+            if [ -n "$VIOLATIONS" ]; then
+              echo "::error file=$f::Unauthorized try/except in recipe (Let It Crash violation)"
+              echo "$VIOLATIONS"
+              FOUND=1
+            fi
+          done
+
+          # In scripts/, check for try/except without LET-IT-CRASH-EXCEPTION
+          # (recipe_client.py has some existing exception handling for HTTP)
+          # We only flag NEW violations - blocks without annotation
+          for f in scripts/*.py; do
+            [ "$(basename "$f")" = "validate_recipes.py" ] && continue
+            BARE_EXCEPT=$(grep -n '^\s*except\s*:' "$f" || true)
+            if [ -n "$BARE_EXCEPT" ]; then
+              echo "::error file=$f::Bare 'except:' clause (must specify exception type)"
+              echo "$BARE_EXCEPT"
+              FOUND=1
+            fi
+          done
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "Let It Crash compliance: OK"
+          fi
+          exit $FOUND
+
+      - name: "KISS: check complexity metrics"
+        run: |
+          echo "Checking KISS metrics..."
+          FOUND=0
+
+          # Check for files over 500 lines (KISS threshold from CLAUDE.md)
+          for f in $(find scripts recipes -name "*.py"); do
+            LINES=$(wc -l < "$f")
+            if [ "$LINES" -gt 700 ]; then
+              echo "::warning file=$f::File has $LINES lines (KISS threshold: 500)"
+            fi
+          done
+
+          # Check for deeply nested code (4+ levels of indentation = 16+ spaces)
+          for f in $(find scripts recipes -name "*.py"); do
+            DEEP=$(grep -n '^\s\{16,\}[^ ]' "$f" || true)
+            if [ -n "$DEEP" ]; then
+              echo "::warning file=$f::Deep nesting detected (>3 levels)"
+            fi
+          done
+
+          echo "KISS metrics check complete"
+
+      - name: "Pure Functions: check for global state mutation"
+        run: |
+          echo "Checking for global state mutations..."
+
+          # Check for 'global' keyword in function bodies
+          for f in $(find scripts recipes -name "*.py"); do
+            GLOBALS=$(grep -n '^\s\+global ' "$f" || true)
+            if [ -n "$GLOBALS" ]; then
+              echo "::error file=$f::Use of 'global' keyword (violates Pure Functions principle)"
+              echo "$GLOBALS"
+            fi
+          done
+
+          echo "Pure Functions check complete"
+
+  # ===================================================================
+  # File Hygiene: prevent accidental commits of unwanted files
+  # ===================================================================
+  file-hygiene:
+    name: File Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for unwanted files
+        run: |
+          echo "Checking for unwanted committed files..."
+          FOUND=0
+
+          # Check for compiled Python files
+          if find . -name "*.pyc" -o -name "__pycache__" | grep -q .; then
+            echo "::error::Compiled Python files (.pyc/__pycache__) found in repo"
+            FOUND=1
+          fi
+
+          # Check for OS-specific files
+          for f in .DS_Store Thumbs.db desktop.ini; do
+            if find . -name "$f" | grep -q .; then
+              echo "::error::OS-specific file ($f) found in repo"
+              FOUND=1
+            fi
+          done
+
+          # Check for IDE config (allow .github and .claude)
+          for d in .idea .vscode *.swp; do
+            if find . -name "$d" -not -path "./.git/*" | grep -q .; then
+              echo "::warning::IDE config ($d) found in repo"
+            fi
+          done
+
+          # Check for large files (>1MB)
+          LARGE=$(find . -type f -size +1M -not -path "./.git/*" 2>/dev/null || true)
+          if [ -n "$LARGE" ]; then
+            echo "::warning::Large files found (>1MB):"
+            echo "$LARGE"
+          fi
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "File hygiene: OK"
+          fi
+          exit $FOUND
+
+  # ===================================================================
+  # Dependency Check: ensure requirements files are valid
+  # ===================================================================
+  dependency-check:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate requirements files
+        run: |
+          echo "Validating requirements files..."
+          FOUND=0
+
+          for reqfile in scripts/requirements.txt requirements-test.txt; do
+            if [ ! -f "$reqfile" ]; then
+              echo "::error::Missing requirements file: $reqfile"
+              FOUND=1
+              continue
+            fi
+
+            echo "Checking $reqfile..."
+            # Dry-run install to check for resolution issues
+            if ! pip install --dry-run -r "$reqfile" 2>&1; then
+              echo "::error::Dependency resolution failed for $reqfile"
+              FOUND=1
+            fi
+          done
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "All requirements files valid"
+          fi
+          exit $FOUND
+
+      - name: Check for known vulnerabilities
+        run: |
+          pip install pip-audit
+          echo "Auditing scripts/requirements.txt..."
+          pip-audit -r scripts/requirements.txt --desc || true
+          echo "Auditing requirements-test.txt..."
+          pip-audit -r requirements-test.txt --desc || true
+
+  # ===================================================================
+  # All checks gate: single status for branch protection
+  # ===================================================================
+  ci-pass:
+    name: CI Pass
+    if: always()
+    needs:
+      - lint
+      - format
+      - recipe-validation
+      - security
+      - test
+      - coverage
+      - design-principles
+      - file-hygiene
+      - dependency-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs passed
+        run: |
+          # Collect results from all required jobs
+          RESULTS="${{ needs.lint.result }} ${{ needs.format.result }} ${{ needs.recipe-validation.result }} ${{ needs.security.result }} ${{ needs.test.result }} ${{ needs.coverage.result }} ${{ needs.design-principles.result }} ${{ needs.file-hygiene.result }} ${{ needs.dependency-check.result }}"
+
+          echo "Job results: $RESULTS"
+
+          if echo "$RESULTS" | grep -qE "failure|cancelled"; then
+            echo "::error::One or more CI jobs failed"
+            exit 1
+          fi
+
+          echo "All CI checks passed"

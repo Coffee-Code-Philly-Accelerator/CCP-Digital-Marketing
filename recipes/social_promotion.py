@@ -29,8 +29,8 @@ KNOWN ISSUES:
 - All run_composio_tool calls must use string literals (not variables) for Rube validator
 """
 
-import os
 import json
+import os
 import time
 from datetime import datetime
 
@@ -44,19 +44,26 @@ try:
     # Check if run_composio_tool is available (injected by Composio runtime)
     run_composio_tool
 except NameError:
+
     def run_composio_tool(tool_name, arguments):
         """Mock implementation for local testing"""
         print(f"[MOCK] run_composio_tool({tool_name}, {arguments})")
         return {"data": {"mock": True, "sub": "mock_user", "id": "mock_id"}}, None
 
+
 try:
     # Check if invoke_llm is available (injected by Composio runtime)
     invoke_llm
 except NameError:
+
     def invoke_llm(prompt):
         """Mock implementation for local testing"""
         print(f"[MOCK] invoke_llm(prompt length={len(prompt)})")
-        return '{"twitter": "mock", "linkedin": "mock", "instagram": "mock", "facebook": "mock", "discord": "mock"}', None
+        return (
+            '{"twitter": "mock", "linkedin": "mock", "instagram": "mock", "facebook": "mock", "discord": "mock"}',
+            None,
+        )
+
 
 print(f"[{datetime.utcnow().isoformat()}] Starting social media promotion workflow")
 
@@ -85,8 +92,8 @@ def extract_json_from_text(text):
             depth -= 1
             if depth == 0:
                 try:
-                    return json.loads(text[start:i + 1])
-                except json.JSONDecodeError:
+                    return json.loads(text[start : i + 1])
+                except json.JSONDecodeError:  # LET-IT-CRASH-EXCEPTION: json.loads has no error-return API
                     return {}
     return {}
 
@@ -123,7 +130,7 @@ results = {
     "facebook_posted": "skipped",
     "discord_posted": "skipped",
     "image_url": "",
-    "summary": ""
+    "summary": "",
 }
 
 # Step 1: Generate promotional image (or reuse provided one)
@@ -134,10 +141,9 @@ else:
     print(f"[{datetime.utcnow().isoformat()}] Generating promotional image...")
     image_prompt = f"Create a modern, eye-catching event promotional graphic for: {event_title}. Style: professional, vibrant colors, suitable for social media. Do not include any text in the image."
 
-    image_result, image_error = run_composio_tool("GEMINI_GENERATE_IMAGE", {
-        "prompt": image_prompt,
-        "model": "gemini-2.5-flash-image"
-    })
+    image_result, image_error = run_composio_tool(
+        "GEMINI_GENERATE_IMAGE", {"prompt": image_prompt, "model": "gemini-2.5-flash-image"}
+    )
 
     if not image_error:
         image_data = extract_data(image_result)
@@ -175,7 +181,7 @@ if copy_error:
         "linkedin": default_copy,
         "instagram": default_copy,
         "facebook": default_copy,
-        "discord": f"**{event_title}**\n\n{default_copy}"
+        "discord": f"**{event_title}**\n\n{default_copy}",
     }
 else:
     copies = extract_json_from_text(copy_response)
@@ -188,7 +194,7 @@ else:
             "linkedin": default_copy,
             "instagram": default_copy,
             "facebook": default_copy,
-            "discord": f"**{event_title}**\n\n{default_copy}"
+            "discord": f"**{event_title}**\n\n{default_copy}",
         }
 
 
@@ -212,11 +218,9 @@ def post_to_linkedin():
     li_text = copies.get("linkedin", event_description)
     if event_url:
         li_text += f"\n\nRSVP: {event_url}"
-    result, error = run_composio_tool("LINKEDIN_CREATE_LINKED_IN_POST", {
-        "author": author_urn,
-        "commentary": li_text,
-        "visibility": "PUBLIC"
-    })
+    result, error = run_composio_tool(
+        "LINKEDIN_CREATE_LINKED_IN_POST", {"author": author_urn, "commentary": li_text, "visibility": "PUBLIC"}
+    )
     return "success" if not error else f"failed: {error}"
 
 
@@ -233,11 +237,14 @@ def post_to_instagram():
     ig_user_id = str(user_data.get("id", ""))
     if not ig_user_id:
         return "failed: Could not determine user ID"
-    container_result, container_error = run_composio_tool("INSTAGRAM_CREATE_MEDIA_CONTAINER", {
-        "ig_user_id": ig_user_id,
-        "image_url": results["image_url"],
-        "caption": copies.get("instagram", event_description)
-    })
+    container_result, container_error = run_composio_tool(
+        "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+        {
+            "ig_user_id": ig_user_id,
+            "image_url": results["image_url"],
+            "caption": copies.get("instagram", event_description),
+        },
+    )
     if container_error:
         return f"failed: Container creation - {container_error}"
     container_data = extract_data(container_result)
@@ -246,15 +253,15 @@ def post_to_instagram():
         return "failed: No container ID returned"
     for _ in range(30):
         time.sleep(5)
-        status_result, _ = run_composio_tool("INSTAGRAM_GET_POST_STATUS", {
-            "ig_user_id": ig_user_id, "creation_id": creation_id
-        })
+        status_result, _ = run_composio_tool(
+            "INSTAGRAM_GET_POST_STATUS", {"ig_user_id": ig_user_id, "creation_id": creation_id}
+        )
         if status_result:
             sd = extract_data(status_result)
             if sd.get("status_code") == "FINISHED":
-                pub_result, pub_error = run_composio_tool("INSTAGRAM_CREATE_POST", {
-                    "ig_user_id": ig_user_id, "creation_id": creation_id
-                })
+                pub_result, pub_error = run_composio_tool(
+                    "INSTAGRAM_CREATE_POST", {"ig_user_id": ig_user_id, "creation_id": creation_id}
+                )
                 return "success" if not pub_error else f"failed: Publish - {pub_error}"
             elif sd.get("status_code") == "ERROR":
                 return "failed: Media processing error"
@@ -270,10 +277,7 @@ def post_to_facebook():
     fb_message = copies.get("facebook", event_description)
     if event_url:
         fb_message += f"\n\nRSVP: {event_url}"
-    result, error = run_composio_tool("FACEBOOK_CREATE_POST", {
-        "page_id": facebook_page_id,
-        "message": fb_message
-    })
+    result, error = run_composio_tool("FACEBOOK_CREATE_POST", {"page_id": facebook_page_id, "message": fb_message})
     return "success" if not error else f"failed: {error}"
 
 
@@ -286,10 +290,9 @@ def post_to_discord():
     dc_content = copies.get("discord", f"**{event_title}**\n\n{event_description}")
     if event_url:
         dc_content += f"\n\nRSVP: {event_url}"
-    result, error = run_composio_tool("DISCORDBOT_CREATE_MESSAGE", {
-        "channel_id": discord_channel_id,
-        "content": dc_content
-    })
+    result, error = run_composio_tool(
+        "DISCORDBOT_CREATE_MESSAGE", {"channel_id": discord_channel_id, "content": dc_content}
+    )
     return "success" if not error else f"failed: {error}"
 
 
@@ -301,13 +304,17 @@ results["facebook_posted"] = post_to_facebook()
 results["discord_posted"] = post_to_discord()
 
 # Build summary
-success_count = sum(1 for s in [
-    results["twitter_posted"],
-    results["linkedin_posted"],
-    results["instagram_posted"],
-    results["facebook_posted"],
-    results["discord_posted"]
-] if s == "success")
+success_count = sum(
+    1
+    for s in [
+        results["twitter_posted"],
+        results["linkedin_posted"],
+        results["instagram_posted"],
+        results["facebook_posted"],
+        results["discord_posted"],
+    ]
+    if s == "success"
+)
 
 results["summary"] = f"Posted to {success_count}/5 platforms"
 

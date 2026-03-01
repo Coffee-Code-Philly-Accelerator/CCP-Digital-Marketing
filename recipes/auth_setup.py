@@ -24,10 +24,7 @@ Usage:
   python auth_setup.py --platform luma --profile-id prof_abc123
 """
 
-import os
-import sys
 from datetime import datetime
-
 
 LOGIN_URLS = {
     "luma": "https://lu.ma/signin",
@@ -41,7 +38,7 @@ def sanitize_input(text, max_len=2000):
     if not text:
         return ""
     text = str(text)
-    text = ''.join(char for char in text if char >= ' ' or char in '\n\t')
+    text = "".join(char for char in text if char >= " " or char in "\n\t")
     text = text.replace("```", "'''")
     text = text.replace("---", "___")
     text = text.replace("'", "\u2019")  # curly apostrophe avoids Rube SyntaxError
@@ -51,6 +48,7 @@ def sanitize_input(text, max_len=2000):
 try:
     run_composio_tool
 except NameError:
+
     def run_composio_tool(tool_name, arguments):
         """Mock implementation for local testing"""
         print(f"[MOCK] run_composio_tool({tool_name}, {arguments})")
@@ -97,9 +95,12 @@ def auth_setup(platform, profile_id=None):
         print(f"[{datetime.utcnow().isoformat()}] Using existing profile: {profile_id}")
     else:
         print(f"[{datetime.utcnow().isoformat()}] Creating new Hyperbrowser profile for {platform}...")
-        profile_result, profile_error = run_composio_tool("HYPERBROWSER_CREATE_PROFILE", {
-            "name": f"ccp-{platform}-auth",
-        })
+        profile_result, profile_error = run_composio_tool(
+            "HYPERBROWSER_CREATE_PROFILE",
+            {
+                "name": f"ccp-{platform}-auth",
+            },
+        )
         if profile_error:
             raise Exception(f"Failed to create profile: {profile_error}")
 
@@ -111,11 +112,14 @@ def auth_setup(platform, profile_id=None):
 
     # Step 2: Create session with the profile
     print(f"[{datetime.utcnow().isoformat()}] Creating session with profile {profile_id}...")
-    session_result, session_error = run_composio_tool("HYPERBROWSER_CREATE_SESSION", {
-        "profile": {"id": profile_id, "persistChanges": True},
-        "useStealth": True,
-        "acceptCookies": True,
-    })
+    session_result, session_error = run_composio_tool(
+        "HYPERBROWSER_CREATE_SESSION",
+        {
+            "profile": {"id": profile_id, "persistChanges": True},
+            "useStealth": True,
+            "acceptCookies": True,
+        },
+    )
     if session_error:
         raise Exception(f"Failed to create session: {session_error}")
 
@@ -129,17 +133,20 @@ def auth_setup(platform, profile_id=None):
 
     # Step 3: Start browser task to navigate to login page
     print(f"[{datetime.utcnow().isoformat()}] Launching browser agent to navigate to {login_url}...")
-    task_result, task_error = run_composio_tool("HYPERBROWSER_START_BROWSER_USE_TASK", {
-        "task": f"Navigate to {login_url} and wait. The user will complete the login manually.",
-        "sessionOptions": {
-            "profile": {"id": profile_id, "persistChanges": True},
-            "useStealth": True,
-            "acceptCookies": True,
+    task_result, task_error = run_composio_tool(
+        "HYPERBROWSER_START_BROWSER_USE_TASK",
+        {
+            "task": f"Navigate to {login_url} and wait. The user will complete the login manually.",
+            "sessionOptions": {
+                "profile": {"id": profile_id, "persistChanges": True},
+                "useStealth": True,
+                "acceptCookies": True,
+            },
+            "llm": "claude-sonnet-4-20250514",
+            "maxSteps": 5,
+            "useVision": True,
         },
-        "llm": "claude-sonnet-4-20250514",
-        "maxSteps": 5,
-        "useVision": True,
-    })
+    )
     if task_error:
         raise Exception(f"Failed to start browser task: {task_error}")
 
@@ -172,7 +179,7 @@ def auth_setup(platform, profile_id=None):
     print(f"Profile ID: {profile_id}")
     print(f"Session ID: {session_id}")
     print(f"Live URL:   {live_url}")
-    print(f"\nOpen the live URL in your browser to complete login.")
+    print("\nOpen the live URL in your browser to complete login.")
     print(f"Set CCP_{platform.upper()}_PROFILE_ID={profile_id} for future recipe runs.")
 
     return result
@@ -182,8 +189,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Hyperbrowser Auth Setup")
-    parser.add_argument("--platform", required=True, choices=["luma", "meetup", "partiful"],
-                        help="Platform to set up auth for")
+    parser.add_argument(
+        "--platform", required=True, choices=["luma", "meetup", "partiful"], help="Platform to set up auth for"
+    )
     parser.add_argument("--profile-id", default="", help="Existing profile ID (skip creation)")
     args = parser.parse_args()
 

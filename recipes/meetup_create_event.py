@@ -39,7 +39,7 @@ def sanitize_input(text, max_len=2000):
     if not text:
         return ""
     text = str(text)
-    text = ''.join(char for char in text if char >= ' ' or char in '\n\t')
+    text = "".join(char for char in text if char >= " " or char in "\n\t")
     text = text.replace("```", "'''")
     text = text.replace("---", "___")
     text = text.replace("'", "\u2019")  # curly apostrophe avoids Rube SyntaxError
@@ -49,6 +49,7 @@ def sanitize_input(text, max_len=2000):
 try:
     run_composio_tool
 except NameError:
+
     def run_composio_tool(tool_name, arguments):
         """Mock implementation for local testing"""
         print(f"[MOCK] run_composio_tool({tool_name}, {arguments})")
@@ -112,11 +113,15 @@ if event_image_url:
    Wait 2 seconds after the image uploads."""
 
 publish_step = 7 if event_image_url else 6
-task_description = base_steps + image_steps + f"""
+task_description = (
+    base_steps
+    + image_steps
+    + f"""
 {publish_step}. Click the 'Publish' or 'Schedule Event' or 'Create Event' button. Wait for the page to navigate.
 
 IMPORTANT: Wait 2 seconds between each action to avoid triggering Meetup's anti-bot detection.
 IMPORTANT: After clicking Publish, wait for the URL to change from /create to the new event URL before finishing."""
+)
 
 print(f"[{datetime.utcnow().isoformat()}] Creating browser task for {CREATE_URL} (provider: {browser_provider})...")
 
@@ -125,18 +130,24 @@ if browser_provider == "hyperbrowser":
     session_options = {"useStealth": hb_stealth, "acceptCookies": True}
     if profile_id:
         session_options["profile"] = {"id": profile_id, "persistChanges": True}
-    task_result, task_error = run_composio_tool("HYPERBROWSER_START_BROWSER_USE_TASK", {
-        "task": full_task,
-        "sessionOptions": session_options,
-        "llm": hb_llm,
-        "maxSteps": hb_max_steps,
-        "useVision": True,
-    })
+    task_result, task_error = run_composio_tool(
+        "HYPERBROWSER_START_BROWSER_USE_TASK",
+        {
+            "task": full_task,
+            "sessionOptions": session_options,
+            "llm": hb_llm,
+            "maxSteps": hb_max_steps,
+            "useVision": True,
+        },
+    )
 else:
-    task_result, task_error = run_composio_tool("BROWSER_TOOL_CREATE_TASK", {
-        "task": task_description,
-        "startUrl": CREATE_URL,
-    })
+    task_result, task_error = run_composio_tool(
+        "BROWSER_TOOL_CREATE_TASK",
+        {
+            "task": task_description,
+            "startUrl": CREATE_URL,
+        },
+    )
 
 if task_error:
     raise Exception(f"Failed to create browser task: {task_error}")
@@ -168,7 +179,9 @@ if session_id:
         if live_url:
             print(f"[{datetime.utcnow().isoformat()}] Watch live: {live_url}")
 
-poll_tool = "HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS" if browser_provider == "hyperbrowser" else "BROWSER_TOOL_WATCH_TASK"
+poll_tool = (
+    "HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS" if browser_provider == "hyperbrowser" else "BROWSER_TOOL_WATCH_TASK"
+)
 poll_args_key = "task_id" if browser_provider == "hyperbrowser" else "taskId"
 
 # Return immediately - caller is responsible for polling

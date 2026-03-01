@@ -1,0 +1,77 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "A",     # flake8-builtins
+    "S",     # flake8-bandit (security)
+    "T20",   # flake8-print (flag prints in library code)
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific rules
+]
+
+ignore = [
+    "T201",   # allow print() - recipes and CLI use print for logging
+    "S603",   # allow subprocess without shell=True check (CLI tests)
+    "S607",   # allow partial executable path (CLI tests)
+    "S101",   # allow assert in tests
+    "S102",   # allow exec() - needed for AST-based recipe function extraction
+    "E501",   # line length handled by formatter
+    "B904",   # allow raise without from in recipe patterns
+    "UP015",  # allow open() without explicit mode
+    "SIM108", # allow if-else over ternary (KISS principle)
+    "SIM112", # allow lowercase env var names (Rube MCP runtime uses lowercase)
+    "RUF059", # allow unused unpacked vars (result, error = run_composio_tool pattern)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Recipes use module-level code, bare expressions, and runtime-injected globals
+"recipes/*.py" = [
+    "F821",   # undefined names (run_composio_tool, invoke_llm injected by runtime)
+    "B018",   # bare expression (output variable at end of recipe)
+    "E402",   # module-level imports not at top (mock guards)
+    "N816",   # mixed-case variable at module level
+    "A001",   # shadowing builtins (output)
+    "F841",   # local variable assigned but never used (output consumed by runtime)
+]
+# Tests use fixtures, mocks, assertions liberally
+"tests/*.py" = [
+    "S105",   # possible hardcoded password (testing redaction requires password literals)
+    "S106",   # possible hardcoded password (test API keys)
+    "N802",   # function name lowercase (test methods)
+    "B008",   # function call in default arg (fixtures)
+    "A002",   # shadowing builtins (monkeypatch overrides)
+]
+# CLI and utility scripts
+"scripts/*.py" = [
+    "B028",   # no stacklevel in warnings
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tests"]
+
+[tool.coverage.run]
+source = ["scripts", "recipes"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 50
+exclude_lines = [
+    "if __name__",
+    "pragma: no cover",
+    "def run_composio_tool",  # mock implementations
+    "def invoke_llm",         # mock implementations
+]

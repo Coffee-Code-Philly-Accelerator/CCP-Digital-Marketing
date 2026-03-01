@@ -21,13 +21,13 @@ Environment:
     COMPOSIO_API_KEY - Your Composio API key (required)
 """
 
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any
 
 try:
     import requests
@@ -37,6 +37,7 @@ except ImportError:
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 except ImportError:
     pass  # dotenv is optional
@@ -56,9 +57,7 @@ RECIPE_IDS = {
 
 EVENT_PLATFORMS = ["luma", "meetup", "partiful"]
 
-COMPOSIO_API_BASE = os.environ.get(
-    "CCP_COMPOSIO_API_BASE", "https://backend.composio.dev/api/v1"
-)
+COMPOSIO_API_BASE = os.environ.get("CCP_COMPOSIO_API_BASE", "https://backend.composio.dev/api/v1")
 
 # Keys that should be redacted in logs
 SENSITIVE_KEYS = {"api_key", "password", "secret", "token", "credential", "auth"}
@@ -94,30 +93,32 @@ def redact_sensitive_data(data, sensitive_keys=SENSITIVE_KEYS):
 # API Client
 # =============================================================================
 
+
 class ComposioRecipeClient:
     """Client for executing Composio/Rube MCP recipes."""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.environ.get("COMPOSIO_API_KEY")
         if not self.api_key:
             raise ValueError(
-                "COMPOSIO_API_KEY not found. Set it as an environment variable "
-                "or pass it to the constructor."
+                "COMPOSIO_API_KEY not found. Set it as an environment variable or pass it to the constructor."
             )
         self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        })
+        self.session.headers.update(
+            {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+        )
 
     def execute_recipe(
         self,
         recipe_id: str,
-        input_data: Dict[str, Any],
+        input_data: dict[str, Any],
         wait_for_completion: bool = True,
         timeout: int = 300,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Execute a recipe with the given input data.
 
@@ -148,7 +149,11 @@ class ComposioRecipeClient:
         except requests.exceptions.HTTPError as e:
             status_code = e.response.status_code if e.response else "unknown"
             # Truncate error details to avoid exposing sensitive API responses
-            error_detail = (e.response.text[:500] + "...") if e.response and len(e.response.text) > 500 else (e.response.text if e.response else str(e))
+            error_detail = (
+                (e.response.text[:500] + "...")
+                if e.response and len(e.response.text) > 500
+                else (e.response.text if e.response else str(e))
+            )
             print(f"[{self._timestamp()}] HTTP Error: {status_code}")
             print(f"[{self._timestamp()}] Details: {error_detail}")
             return {"error": f"HTTP {status_code}", "details": error_detail}
@@ -159,7 +164,7 @@ class ComposioRecipeClient:
             print(f"[{self._timestamp()}] Unexpected error: {type(e).__name__}: {e}")
             return {"error": str(e)}
 
-    def _poll_execution(self, execution_id: str, timeout: int) -> Dict[str, Any]:
+    def _poll_execution(self, execution_id: str, timeout: int) -> dict[str, Any]:
         """Poll for execution completion."""
         url = f"{COMPOSIO_API_BASE}/executions/{execution_id}"
         start_time = time.time()
@@ -173,9 +178,7 @@ class ComposioRecipeClient:
                 status = result.get("status", "unknown")
                 print(f"[{self._timestamp()}] Status: {status}")
 
-                if status in ("completed", "success", "finished"):
-                    return result
-                elif status in ("failed", "error"):
+                if status in ("completed", "success", "finished") or status in ("failed", "error"):
                     return result
 
                 time.sleep(5)  # Poll every 5 seconds
@@ -186,7 +189,7 @@ class ComposioRecipeClient:
 
         return {"error": "Timeout waiting for execution", "execution_id": execution_id}
 
-    def get_recipe_details(self, recipe_id: str) -> Dict[str, Any]:
+    def get_recipe_details(self, recipe_id: str) -> dict[str, Any]:
         """Get recipe metadata and schema."""
         url = f"{COMPOSIO_API_BASE}/recipes/{recipe_id}"
         try:
@@ -205,6 +208,7 @@ class ComposioRecipeClient:
 # Recipe Wrappers
 # =============================================================================
 
+
 def create_event(
     client: ComposioRecipeClient,
     title: str,
@@ -215,7 +219,7 @@ def create_event(
     meetup_group_url: str = "",
     skip_platforms: str = "",
     provider: str = "hyperbrowser",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create an event on Luma, Meetup, and Partiful (sequentially, per-platform recipes).
 
@@ -274,7 +278,7 @@ def promote_event(
     discord_channel_id: str = "",
     facebook_page_id: str = "",
     skip_platforms: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Promote an event on social media platforms.
 
@@ -320,7 +324,7 @@ def full_workflow(
     facebook_page_id: str = "",
     skip_platforms: str = "",
     provider: str = "hyperbrowser",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run the full workflow: create event on all platforms + promote on social media.
 
@@ -410,7 +414,7 @@ def post_to_social(
     discord_channel_id: str = "",
     facebook_page_id: str = "",
     skip_platforms: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Post generic content to social media platforms.
 
@@ -451,6 +455,7 @@ def post_to_social(
 # =============================================================================
 # CLI Interface
 # =============================================================================
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -522,7 +527,12 @@ Environment Variables:
     add_common_args(create_parser)
     create_parser.add_argument("--meetup-url", default="", help="Meetup group URL")
     create_parser.add_argument("--skip", default="", help="Platforms to skip (e.g., 'meetup,partiful')")
-    create_parser.add_argument("--provider", choices=["hyperbrowser", "browser_tool"], default="hyperbrowser", help="Browser automation provider")
+    create_parser.add_argument(
+        "--provider",
+        choices=["hyperbrowser", "browser_tool"],
+        default="hyperbrowser",
+        help="Browser automation provider",
+    )
 
     # promote command
     promote_parser = subparsers.add_parser("promote", help="Promote event on social media")
@@ -539,7 +549,12 @@ Environment Variables:
     full_parser.add_argument("--discord-channel", default="", help="Discord channel ID")
     full_parser.add_argument("--facebook-page", default="", help="Facebook page ID")
     full_parser.add_argument("--skip", default="", help="Platforms to skip")
-    full_parser.add_argument("--provider", choices=["hyperbrowser", "browser_tool"], default="hyperbrowser", help="Browser automation provider")
+    full_parser.add_argument(
+        "--provider",
+        choices=["hyperbrowser", "browser_tool"],
+        default="hyperbrowser",
+        help="Browser automation provider",
+    )
 
     # social-post command
     social_post_parser = subparsers.add_parser("social-post", help="Post generic content to social media")
@@ -548,7 +563,9 @@ Environment Variables:
     social_post_parser.add_argument("--url", default="", help="Link to include in posts")
     social_post_parser.add_argument("--image-url", default="", help="Reuse existing image URL (skips Gemini)")
     social_post_parser.add_argument("--image-prompt", default="", help="Custom Gemini prompt for image generation")
-    social_post_parser.add_argument("--tone", default="", help="Style: engaging, professional, casual, excited, informative")
+    social_post_parser.add_argument(
+        "--tone", default="", help="Style: engaging, professional, casual, excited, informative"
+    )
     social_post_parser.add_argument("--cta", default="", help="Call-to-action text")
     social_post_parser.add_argument("--hashtags", default="", help="Custom hashtags to include")
     social_post_parser.add_argument("--discord-channel", default="", help="Discord channel ID")
@@ -557,7 +574,9 @@ Environment Variables:
 
     # info command
     info_parser = subparsers.add_parser("info", help="Get recipe information")
-    info_parser.add_argument("--recipe", choices=["luma", "meetup", "partiful", "promote", "social-post", "all"], default="all")
+    info_parser.add_argument(
+        "--recipe", choices=["luma", "meetup", "partiful", "promote", "social-post", "all"], default="all"
+    )
 
     args = parser.parse_args()
 
