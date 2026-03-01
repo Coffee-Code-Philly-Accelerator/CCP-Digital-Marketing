@@ -1,0 +1,64 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this PR against the project's CLAUDE.md design principles.
+            Focus especially on:
+            - Zero try/except policy (Let It Crash principle). Flag ANY try/except block that lacks a # LET-IT-CRASH-EXCEPTION annotation.
+            - KISS: unnecessary complexity, premature abstractions, clever one-liners
+            - Pure Functions: side effects in business logic that should be pure
+            - SOLID violations (especially SRP and OCP)
+            - Recipe pattern compliance (os.environ.get for inputs, run_composio_tool for APIs, invoke_llm for AI, bare variable output)
+
+            IMPORTANT: Do NOT suggest adding try/except blocks, defensive error handling, retry logic, or fallback chains. These are explicitly forbidden in this codebase. The correct pattern is error-returning tuples: result, error = run_composio_tool(...)
+          claude_args: "--max-turns 5"
+
+  interactive:
+    if: |
+      github.event_name != 'pull_request' &&
+      github.event.sender.type != 'Bot' &&
+      (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude'))
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--max-turns 10"
