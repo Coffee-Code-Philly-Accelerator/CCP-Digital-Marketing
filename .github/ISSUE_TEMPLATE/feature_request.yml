@@ -1,0 +1,74 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for CCP Digital Marketing
+title: "[Feature]: "
+labels: ["enhancement", "needs-discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please provide as much detail as possible to help us understand your request.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Feature Description
+      description: A clear and concise description of the feature you'd like to see.
+      placeholder: Describe the feature...
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use Case
+      description: What problem does this feature solve? Why is it needed?
+      placeholder: |
+        I often need to...
+        This would help with...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How do you envision this feature working?
+      placeholder: Describe your ideal solution...
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative solutions or workarounds?
+      placeholder: I've tried... but...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: Which area does this feature relate to?
+      options:
+        - New Platform (Eventbrite, Meetup alternative, etc.)
+        - New Social Network (Bluesky, Mastodon, Threads, etc.)
+        - Recipe Enhancement (improve existing automation)
+        - CLI Feature (scripts/recipe_client.py)
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Willing to Contribute
+      description: Would you be interested in contributing this feature?
+      options:
+        - "Yes - I can implement this"
+        - "Maybe - I need guidance"
+        - "No - just suggesting"
+    validations:
+      required: false

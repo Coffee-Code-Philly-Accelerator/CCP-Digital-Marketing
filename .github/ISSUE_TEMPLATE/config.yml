@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 Join our Discord
+    url: https://discord.gg/X2a8jr73N4
+    about: Join our Discord community for real-time support and discussions
+  - name: 📖 Documentation
+    url: https://github.com/Coffee-Code-Philly-Accelerator/CCP-Digital-Marketing/blob/main/README.md
+    about: Read the documentation for setup guides and usage examples

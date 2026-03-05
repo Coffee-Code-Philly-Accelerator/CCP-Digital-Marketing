@@ -1,0 +1,44 @@
+# CODEOWNERS
+#
+# This file defines code ownership for automatic PR reviewer assignment.
+# Each line is a file pattern followed by one or more owners (GitHub usernames or teams).
+#
+# Learn more: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Global ownership - default for all files
+* @Coffee-Code-Philly-Accelerator
+
+# Recipe files - critical automation logic
+/recipes/ @Coffee-Code-Philly-Accelerator
+/recipes/*.py @Coffee-Code-Philly-Accelerator
+
+# Client scripts - core CLI functionality
+/scripts/ @Coffee-Code-Philly-Accelerator
+/scripts/*.py @Coffee-Code-Philly-Accelerator
+
+# CI/CD workflows - require careful review
+/.github/workflows/ @Coffee-Code-Philly-Accelerator
+/.github/workflows/*.yml @Coffee-Code-Philly-Accelerator
+
+# Documentation - ensure accuracy and clarity
+/docs/ @Coffee-Code-Philly-Accelerator
+*.md @Coffee-Code-Philly-Accelerator
+
+# Tests - maintain quality standards
+/tests/ @Coffee-Code-Philly-Accelerator
+/tests/*.py @Coffee-Code-Philly-Accelerator
+
+# Configuration files - impact project-wide behavior
+pyproject.toml @Coffee-Code-Philly-Accelerator
+requirements*.txt @Coffee-Code-Philly-Accelerator
+.env.example @Coffee-Code-Philly-Accelerator
+
+# GitHub configuration - community health files
+/.github/ISSUE_TEMPLATE/ @Coffee-Code-Philly-Accelerator
+/.github/CODEOWNERS @Coffee-Code-Philly-Accelerator
+/.github/dependabot.yml @Coffee-Code-Philly-Accelerator
+CONTRIBUTING.md @Coffee-Code-Philly-Accelerator
+CODE_OF_CONDUCT.md @Coffee-Code-Philly-Accelerator
+SECURITY.md @Coffee-Code-Philly-Accelerator
+SUPPORT.md @Coffee-Code-Philly-Accelerator
+LICENSE @Coffee-Code-Philly-Accelerator

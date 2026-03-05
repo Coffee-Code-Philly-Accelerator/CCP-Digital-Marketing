@@ -1,0 +1,38 @@
+version: 2
+updates:
+  # Python dependencies (scripts/requirements.txt)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    commit-message:
+      prefix: "deps(python):"
+      include: "scope"
+    reviewers:
+      - "Coffee-Code-Philly-Accelerator"
+    labels:
+      - "dependencies"
+      - "python"
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+
+  # GitHub Actions workflows
+  - package-ecosystem: "github-actions"
+    directory: "/.github/workflows"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    commit-message:
+      prefix: "deps(gha):"
+      include: "scope"
+    reviewers:
+      - "Coffee-Code-Philly-Accelerator"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    open-pull-requests-limit: 5

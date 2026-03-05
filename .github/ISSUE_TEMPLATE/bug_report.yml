@@ -1,0 +1,87 @@
+name: Bug Report
+description: Report a bug or issue with the CCP Digital Marketing automation
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the information below to help us diagnose and fix the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Tell us what went wrong...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this issue?
+      placeholder: |
+        1. Run command '...'
+        2. Execute recipe '...'
+        3. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: Tell us what should have happened...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      description: Where did you encounter this bug?
+      options:
+        - Rube App (web interface)
+        - Claude Code (CLI)
+        - Python CLI (scripts/recipe_client.py)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: recipe_id
+    attributes:
+      label: Recipe ID
+      description: If applicable, which recipe failed? (e.g., rcp_mXyFyALaEsQF)
+      placeholder: rcp_xxxxx
+    validations:
+      required: false
+
+  - type: input
+    id: python_version
+    attributes:
+      label: Python Version
+      description: Output of `python --version`
+      placeholder: Python 3.11.5
+    validations:
+      required: false
+
+  - type: textarea
+    id: error_output
+    attributes:
+      label: Error Output
+      description: Copy and paste any relevant error messages or logs. This will be automatically formatted as code.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here (screenshots, related issues, etc.)
+    validations:
+      required: false
