@@ -73,6 +73,7 @@ output
 | Create Event (Partiful) | `rcp_bN7jRF5P_Kf0` | AI browser agent creates event on Partiful |
 | Social Promotion | `rcp_X65IirgPhwh3` | Parallel API posting to 5 social platforms |
 | Social Post | `rcp_3LheyoNQpiFK` | Generic social media post (non-event content) |
+| Email Reply | `rcp_NLnlCNmIcIuN` | Three-pass review of email replies (clarity, grammar, tone); generate or review mode |
 
 All event creation recipes default to Hyperbrowser (`HYPERBROWSER_START_BROWSER_USE_TASK`) with persistent auth profiles, falling back to Composio's `BROWSER_TOOL_CREATE_TASK` when configured. Both use a single AI browser agent call + polling pattern instead of the old multi-step state machine with sequential `NAVIGATE`/`PERFORM_WEB_TASK`/`FETCH_WEBPAGE` calls that exceeded the 4-minute Rube runtime timeout.
 
@@ -106,6 +107,10 @@ All event creation recipes default to Hyperbrowser (`HYPERBROWSER_START_BROWSER_
 - `INSTAGRAM_GET_USER_INFO` / `INSTAGRAM_CREATE_MEDIA_CONTAINER` / `INSTAGRAM_GET_POST_STATUS` / `INSTAGRAM_CREATE_POST`
 - `FACEBOOK_CREATE_POST`
 - `DISCORDBOT_CREATE_MESSAGE`
+
+### Email APIs
+- `GMAIL_GET_MESSAGE` - Read email by message ID (requires gmail.readonly scope)
+- `OUTLOOK_GET_MESSAGE` - Read email by message ID (requires Mail.Read scope)
 
 ### AI
 - `GEMINI_GENERATE_IMAGE` - Image generation (model: gemini-2.5-flash-image)
@@ -211,6 +216,7 @@ Skills are defined in `.claude/skills/`. Each wraps a `RUBE_EXECUTE_RECIPE` call
 | Partiful Create | `partiful-create/` | `rcp_bN7jRF5P_Kf0` | Create event on Partiful via browser automation |
 | Social Promote | `social-promote/` | `rcp_X65IirgPhwh3` | Post event to Twitter, LinkedIn, Instagram, Facebook, Discord |
 | Social Post | `social-post/` | `rcp_3LheyoNQpiFK` | Post generic content (non-event) to social media platforms |
+| Email Reply | `email-reply/` | `rcp_NLnlCNmIcIuN` | Three-pass review of email replies (clarity, grammar, tone); generate from Gmail/Outlook or review drafts |
 | Stage Event | `stage-event/` | N/A (Claude + GEMINI) | Generate platform-specific descriptions + image, preview for user review |
 | Full Workflow | `full-workflow/` | All of the above | Orchestrate: stage content, create on all platforms, then promote on social media |
 | Auth Setup | `auth-setup/` | N/A (direct tool calls) | Set up Hyperbrowser persistent auth profiles |
