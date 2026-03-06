@@ -25,9 +25,9 @@ Pass 2: Spelling & Grammar - Typos, punctuation, grammar, sentence structure
 Pass 3: Tone & Perception - Tone match, emotional impact, recipient perception
 """
 
+import base64
 import json
 import os
-import base64
 from datetime import datetime
 
 # ============================================================================
@@ -53,7 +53,11 @@ except NameError:
                         "snippet": "Hi there, can you provide an update?",
                         "payload": {
                             "headers": [{"name": "Subject", "value": "Re: Project Status Update"}],
-                            "body": {"data": base64.b64encode(b"Hi there, can you provide an update on the project?").decode()},
+                            "body": {
+                                "data": base64.b64encode(
+                                    b"Hi there, can you provide an update on the project?"
+                                ).decode()
+                            },
                         },
                         "from": {"emailAddress": {"address": "sender@example.com"}},
                     }
@@ -71,11 +75,17 @@ except NameError:
         """Mock implementation for local testing"""
         print(f"[MOCK] invoke_llm(prompt length={len(prompt)})")
         if "CLARITY" in prompt:
-            return '{"issues": ["No major issues"], "improved_text": "Mock improved text for clarity", "summary": "Improved clarity"}', None
+            return (
+                '{"issues": ["No major issues"], "improved_text": "Mock improved text for clarity", "summary": "Improved clarity"}',
+                None,
+            )
         elif "SPELLING" in prompt:
             return '{"issues": [], "improved_text": "Mock improved text for grammar", "summary": "Fixed grammar"}', None
         elif "TONE" in prompt:
-            return '{"issues": [], "improved_text": "Mock final text", "summary": "Adjusted tone", "recipient_perception": "positive"}', None
+            return (
+                '{"issues": [], "improved_text": "Mock final text", "summary": "Adjusted tone", "recipient_perception": "positive"}',
+                None,
+            )
         return '{"improved_text": "Mock reply text"}', None
 
 
@@ -181,7 +191,7 @@ def extract_email_body_gmail(payload):
             if part_body.get("data"):
                 try:
                     return base64.urlsafe_b64decode(part_body["data"]).decode("utf-8")
-                except Exception:  # LET-IT-CRASH-EXCEPTION: base64 decode can fail
+                except Exception:  # LET-IT-CRASH-EXCEPTION: base64 decode can fail  # noqa: S112
                     continue
         # Recursively check nested multipart
         if mime_type.startswith("multipart/"):
