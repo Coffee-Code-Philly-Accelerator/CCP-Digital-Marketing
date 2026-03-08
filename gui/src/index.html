@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCP Telemetry Cache Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #4ec9b0;
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .controls select, .controls input, .controls button {
+            padding: 8px 12px;
+            background: #2d2d2d;
+            border: 1px solid #3e3e3e;
+            color: #d4d4d4;
+            border-radius: 4px;
+        }
+
+        .controls button {
+            background: #0e639c;
+            cursor: pointer;
+        }
+
+        .controls button:hover {
+            background: #1177bb;
+        }
+
+        #workflows-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #252526;
+            margin-bottom: 20px;
+        }
+
+        #workflows-table th {
+            background: #2d2d2d;
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #3e3e3e;
+            color: #4ec9b0;
+        }
+
+        #workflows-table td {
+            padding: 12px;
+            border-bottom: 1px solid #3e3e3e;
+        }
+
+        #workflows-table tr:hover {
+            background: #2d2d2d;
+            cursor: pointer;
+        }
+
+        .status-running { color: #dcdcaa; }
+        .status-completed { color: #4ec9b0; }
+        .status-failed { color: #f48771; }
+        .status-partial { color: #ce9178; }
+
+        #timeline-container {
+            display: none;
+            background: #252526;
+            padding: 20px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        #timeline-container h2 {
+            color: #4ec9b0;
+            margin-bottom: 15px;
+        }
+
+        .tool-call {
+            padding: 10px;
+            margin: 5px 0;
+            background: #2d2d2d;
+            border-left: 4px solid;
+            border-radius: 2px;
+        }
+
+        .tool-call.success { border-left-color: #4ec9b0; }
+        .tool-call.error { border-left-color: #f48771; }
+        .tool-call.pending { border-left-color: #dcdcaa; }
+
+        .tool-call-header {
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .tool-call-details {
+            font-size: 0.9em;
+            color: #858585;
+        }
+
+        #search-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #252526;
+            border-radius: 4px;
+        }
+
+        #search-section h2 {
+            color: #4ec9b0;
+            margin-bottom: 15px;
+        }
+
+        .search-input-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        .search-input-group input {
+            flex: 1;
+            padding: 10px;
+            background: #2d2d2d;
+            border: 1px solid #3e3e3e;
+            color: #d4d4d4;
+            border-radius: 4px;
+        }
+
+        #search-results {
+            margin-top: 15px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #858585;
+        }
+    </style>
+</head>
+<body>
+    <h1>CCP Telemetry Cache Viewer</h1>
+
+    <div class="controls">
+        <select id="filter-type">
+            <option value="">All Workflow Types</option>
+            <option value="full-workflow">full-workflow</option>
+            <option value="create-event">create-event</option>
+            <option value="promote">promote</option>
+            <option value="social-post">social-post</option>
+        </select>
+
+        <select id="filter-status">
+            <option value="">All Statuses</option>
+            <option value="running">running</option>
+            <option value="completed">completed</option>
+            <option value="failed">failed</option>
+            <option value="partial">partial</option>
+        </select>
+
+        <button onclick="loadWorkflows()">Refresh</button>
+        <button onclick="cleanupExpired()">Cleanup (7 days)</button>
+    </div>
+
+    <table id="workflows-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>User</th>
+            </tr>
+        </thead>
+        <tbody id="workflows-body">
+            <tr><td colspan="5" class="loading">Loading workflows...</td></tr>
+        </tbody>
+    </table>
+
+    <div id="timeline-container">
+        <button onclick="closeTimeline()">Close Timeline</button>
+        <h2 id="timeline-title">Workflow Timeline</h2>
+        <div id="timeline-content"></div>
+    </div>
+
+    <div id="search-section">
+        <h2>Search Correlation</h2>
+        <p style="margin-bottom: 10px; color: #858585;">
+            Find workflows that reference a specific artifact (e.g., image_url, event_url)
+        </p>
+        <div class="search-input-group">
+            <input type="text" id="search-artifact" placeholder="Enter artifact to search (e.g., https://storage.googleapis.com/...)">
+            <button onclick="searchCorrelation()">Search</button>
+        </div>
+        <div id="search-results"></div>
+    </div>
+
+    <script src="timeline.js"></script>
+    <script src="search.js"></script>
+
+    <script>
+        const { invoke } = window.__TAURI__.core;
+
+        async function loadWorkflows() {
+            const workflowType = document.getElementById('filter-type').value;
+            const status = document.getElementById('filter-status').value;
+
+            const tbody = document.getElementById('workflows-body');
+            tbody.innerHTML = '<tr><td colspan="5" class="loading">Loading...</td></tr>';
+
+            try {
+                const workflows = await invoke('list_workflows', {
+                    workflowType: workflowType || null,
+                    status: status || null
+                });
+
+                if (workflows.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="loading">No workflows found</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = workflows.map(wf => `
+                    <tr onclick="loadWorkflowTimeline(${wf.id})">
+                        <td>${wf.id}</td>
+                        <td>${wf.workflow_type}</td>
+                        <td class="status-${wf.status}">${wf.status}</td>
+                        <td>${formatTimestamp(wf.created_at)}</td>
+                        <td>${wf.user_id}</td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                tbody.innerHTML = `<tr><td colspan="5" style="color: #f48771;">Error: ${error}</td></tr>`;
+            }
+        }
+
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleString();
+        }
+
+        async function cleanupExpired() {
+            if (!confirm('Delete workflows older than 7 days?')) return;
+
+            try {
+                const deleted = await invoke('cleanup_expired', { days: 7 });
+                alert(`Deleted ${deleted} workflows`);
+                loadWorkflows();
+            } catch (error) {
+                alert(`Error: ${error}`);
+            }
+        }
+
+        function closeTimeline() {
+            document.getElementById('timeline-container').style.display = 'none';
+        }
+
+        // Load workflows on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadWorkflows();
+        });
+    </script>
+</body>
+</html>

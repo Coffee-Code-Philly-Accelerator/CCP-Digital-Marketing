@@ -1,0 +1,14 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Test artifacts
+*.db
+*.db-shm
+*.db-wal
+
+# Backup files
+*.bak
+*.txt
+*.patch
+*.rs.bak
