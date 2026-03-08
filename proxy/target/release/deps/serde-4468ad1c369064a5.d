@@ -1,0 +1,14 @@
+/Users/macbook/Desktop/CCP-Digital-Marketing/proxy/target/release/deps/serde-4468ad1c369064a5.d: /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/macbook/Desktop/CCP-Digital-Marketing/proxy/target/release/build/serde-e56a0384df7fd9c4/out/private.rs
+
+/Users/macbook/Desktop/CCP-Digital-Marketing/proxy/target/release/deps/libserde-4468ad1c369064a5.rlib: /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/macbook/Desktop/CCP-Digital-Marketing/proxy/target/release/build/serde-e56a0384df7fd9c4/out/private.rs
+
+/Users/macbook/Desktop/CCP-Digital-Marketing/proxy/target/release/deps/libserde-4468ad1c369064a5.rmeta: /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/macbook/Desktop/CCP-Digital-Marketing/proxy/target/release/build/serde-e56a0384df7fd9c4/out/private.rs
+
+/Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/macbook/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/macbook/Desktop/CCP-Digital-Marketing/proxy/target/release/build/serde-e56a0384df7fd9c4/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/macbook/Desktop/CCP-Digital-Marketing/proxy/target/release/build/serde-e56a0384df7fd9c4/out

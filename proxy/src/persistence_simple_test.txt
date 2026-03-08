@@ -1,0 +1,5 @@
+Here's the issue: include_str!() includes the file content, but when we split by ';' and filter, we might be losing CREATE TABLE statements.
+
+Better approach: Use sqlx::query for batch execution or manually create tables in tests.
+
+Let me try the manual approach for tests:

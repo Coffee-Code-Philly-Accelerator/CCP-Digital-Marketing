@@ -1,0 +1,25 @@
+{
+  "productName": "CCP Cache Viewer",
+  "version": "0.1.0",
+  "identifier": "com.ccp.cache-viewer",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devUrl": "../src",
+    "frontendDist": "../src"
+  },
+  "app": {
+    "security": {
+      "csp": null
+    },
+    "windows": [
+      {
+        "title": "CCP Telemetry Cache Viewer",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  }
+}

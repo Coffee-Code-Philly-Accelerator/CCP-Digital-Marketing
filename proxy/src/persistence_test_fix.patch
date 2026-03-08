@@ -1,0 +1,23 @@
+--- a/proxy/src/persistence.rs
++++ b/proxy/src/persistence.rs
+@@ -153,8 +153,8 @@ mod tests {
+ 
+     #[tokio::test]
+     async fn test_create_repository() {
+-        let dir = tempdir().unwrap();
+-        let db_path = dir.path().join("test.db");
++        // Use in-memory database for tests
++        let db_path = std::path::PathBuf::from(":memory:");
+         let repo = SqliteCacheRepository::new(&db_path).await.unwrap();
+         assert_eq!(repo.count_workflows().await.unwrap(), 0);
+     }
+@@ -162,8 +162,8 @@ mod tests {
+     #[tokio::test]
+     async fn test_create_tool_call() {
+-        let dir = tempdir().unwrap();
+-        let db_path = dir.path().join("test.db");
++        // Use in-memory database for tests
++        let db_path = std::path::PathBuf::from(":memory:");
+         let repo = SqliteCacheRepository::new(&db_path).await.unwrap();
+ 
+         // First create a workflow
