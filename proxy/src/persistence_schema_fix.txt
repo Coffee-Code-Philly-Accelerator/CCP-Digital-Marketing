@@ -1,0 +1,10 @@
+Replace line ~40-47 with:
+        // Run migrations (create schema if not exists)
+        let schema = include_str!("../../cache_db/schema.sql");
+        for statement in schema.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with("--") {
+                // Execute all statements including PRAGMA
+                sqlx::query(trimmed).execute(&pool).await.ok(); // Ignore errors for in-memory DBs
+            }
+        }

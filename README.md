@@ -13,6 +13,7 @@ This system automates the entire event lifecycle:
 2. **Content Generation** - AI generates promotional images and platform-optimized descriptions
 3. **Social Promotion** - Posts to Twitter, LinkedIn, Instagram, Facebook, and Discord
 4. **Generic Social Posts** - Post any content (not just events) to all social platforms
+5. **Email Reply Review** - Three-pass review system (clarity, grammar, tone) for email responses
 
 ```mermaid
 flowchart TB
@@ -68,6 +69,7 @@ flowchart LR
         R3[Recipe: Partiful Create<br/>rcp_bN7jRF5P_Kf0]
         R4[Recipe: Social Promotion<br/>rcp_X65IirgPhwh3]
         R5[Recipe: Social Post<br/>rcp_3LheyoNQpiFK]
+        R6[Recipe: Email Reply<br/>rcp_NLnlCNmIcIuN]
     end
 
     subgraph Browser["Browser Automation"]
@@ -422,6 +424,89 @@ sequenceDiagram
 | Hashtag control | Yes (`hashtags` param) | No |
 | URL label in posts | Generic (no label) | "RSVP: {url}" |
 
+### Recipe 6: Email Reply Review
+
+**Recipe ID:** `rcp_NLnlCNmIcIuN`
+**Recipe URL:** [View on Rube](https://rube.app)
+
+Three-pass review system for email replies that evaluates clarity, grammar, and tone. Supports two modes: generate replies from Gmail/Outlook messages, or review user-drafted replies.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant R as Recipe
+    participant E as Email API
+    participant L as LLM
+
+    alt Generate Mode
+        U->>R: Message ID + Provider
+        R->>E: Get email content
+        E-->>R: Email text
+        R->>L: Generate reply + 3-pass review
+        L-->>R: Reply + Review feedback
+        R-->>U: Draft reply + Pass 1-3 results
+    else Review Mode
+        U->>R: Draft reply text
+        R->>L: Perform 3-pass review
+        L-->>R: Review feedback
+        R-->>U: Pass 1-3 results
+    end
+```
+
+#### Input Parameters
+
+| Parameter | Required | Description | Example |
+|-----------|----------|-------------|---------|
+| `mode` | Yes | "generate" or "review" | "generate" |
+| `provider` | Conditional | Email provider (required for generate mode) | "gmail" or "outlook" |
+| `message_id` | Conditional | Email message ID (required for generate mode) | "abc123xyz" |
+| `draft_text` | Conditional | Reply text (required for review mode) | "Thank you for reaching out..." |
+| `context` | No | Additional context for generation | "Be friendly and offer to meet next week" |
+
+#### Output
+
+```json
+{
+  "mode": "generate",
+  "reply_text": "Thank you for your email...",
+  "pass1_clarity": {
+    "score": "PASS",
+    "feedback": "Message is clear and direct",
+    "suggestions": []
+  },
+  "pass2_grammar": {
+    "score": "PASS",
+    "feedback": "No grammar issues found",
+    "corrections": []
+  },
+  "pass3_tone": {
+    "score": "PASS",
+    "feedback": "Professional and friendly tone maintained",
+    "adjustments": []
+  },
+  "overall_status": "APPROVED",
+  "final_recommendation": "Reply is ready to send"
+}
+```
+
+#### Three-Pass Review System
+
+| Pass | Focus | Evaluates |
+|------|-------|-----------|
+| Pass 1: Clarity | Message comprehension | Is the response clear? Does it address all points? Is it concise? |
+| Pass 2: Grammar | Language mechanics | Spelling, punctuation, sentence structure, word choice |
+| Pass 3: Tone | Emotional impact | Professional yet friendly? Appropriate formality? Respectful? |
+
+#### Connection Setup
+
+**Gmail:**
+- Requires `GMAIL_GET_MESSAGE` permission (read-only access)
+- Connect via Composio: https://app.composio.dev/connections
+
+**Outlook:**
+- Requires `OUTLOOK_GET_MESSAGE` permission (Mail.Read scope)
+- Connect via Composio: https://app.composio.dev/connections
+
 ---
 
 ## Recipe Summary
@@ -433,6 +518,7 @@ sequenceDiagram
 | 3 | Partiful Create Event | `rcp_bN7jRF5P_Kf0` | Create event on Partiful | Event details |
 | 4 | Event Social Promotion | `rcp_X65IirgPhwh3` | Promote event on social media | Event details + URL |
 | 5 | Generic Social Post | `rcp_3LheyoNQpiFK` | Post any content to social media | Topic + content |
+| 6 | Email Reply | `rcp_NLnlCNmIcIuN` | Three-pass review of email replies | Message ID or draft text |
 
 ---
 
