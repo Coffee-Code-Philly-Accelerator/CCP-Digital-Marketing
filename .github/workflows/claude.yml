@@ -12,7 +12,7 @@ on:
 
 jobs:
   review:
-    # Temporarily disabled to unblock merges
+    # Temporarily disabled to unblock PR merges
     if: false  # github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
