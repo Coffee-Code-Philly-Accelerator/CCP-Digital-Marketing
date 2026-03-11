@@ -229,9 +229,9 @@ Skills are defined in `.claude/skills/`. Each wraps a `RUBE_EXECUTE_RECIPE` call
 
 GitHub Actions workflow (`.github/workflows/claude.yml`) provides two modes:
 
-### Auto-Review (on every PR)
+### Auto-Review (temporarily disabled)
 
-Triggers on `pull_request: [opened, synchronize, ready_for_review]`. Claude reviews the diff against this file's design principles — Let It Crash, KISS, Pure Functions, SOLID, and recipe patterns. Posts review comments but makes no code changes.
+Currently disabled (`if: false` in workflow) to unblock PR merges. When re-enabled, triggers on `pull_request: [opened, synchronize, ready_for_review]`. Claude reviews the diff against this file's design principles — Let It Crash, KISS, Pure Functions, SOLID, and recipe patterns. Posts review comments but makes no code changes.
 
 ### Interactive @claude (on comment)
 

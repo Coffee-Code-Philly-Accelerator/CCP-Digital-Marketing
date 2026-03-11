@@ -10,7 +10,9 @@
 
 ## Overview
 
-Each recipe creates an event on a single platform using browser automation. Recipes are designed to be run sequentially (one platform at a time) since browser automation sessions cannot overlap. Each recipe uses the fire-and-forget pattern: it starts an AI browser agent via `BROWSER_TOOL_CREATE_TASK` and returns immediately with a `task_id` for caller-side polling.
+Each recipe creates an event on a single platform using browser automation. Recipes are designed to be run sequentially (one platform at a time) since browser automation sessions cannot overlap. Each recipe uses the fire-and-forget pattern: it starts an AI browser agent and returns immediately with a `task_id` for caller-side polling.
+
+Recipes default to **Hyperbrowser** (`HYPERBROWSER_START_BROWSER_USE_TASK`) with persistent auth profiles, falling back to Composio's `BROWSER_TOOL_CREATE_TASK` when `CCP_BROWSER_PROVIDER=browser_tool` is set. Both providers use the same single-call + polling pattern.
 
 ## Why Browser Automation?
 
@@ -35,25 +37,31 @@ flowchart TB
     end
 
     subgraph Browser["Step 2: Fire-and-Forget Browser Task"]
-        F[BROWSER_TOOL_CREATE_TASK<br/>Launches AI browser agent]
-        G[BROWSER_TOOL_GET_SESSION<br/>Gets live_url for watching]
+        direction TB
+        F{CCP_BROWSER_PROVIDER?}
+        F -->|hyperbrowser default| G1[HYPERBROWSER_START_BROWSER_USE_TASK<br/>+ persistent profile]
+        F -->|browser_tool| G2[BROWSER_TOOL_CREATE_TASK<br/>+ startUrl]
+        G1 --> H1[HYPERBROWSER_GET_SESSION_DETAILS<br/>Gets live_url]
+        G2 --> H2[BROWSER_TOOL_GET_SESSION<br/>Gets live_url]
     end
 
-    subgraph Polling["Step 3: Caller-Side Polling"]
-        H[BROWSER_TOOL_WATCH_TASK<br/>Poll every 10-15s]
-        I{status?}
-        J[started - still running]
-        K[finished - check current_url]
-        L[stopped - task aborted]
+    subgraph Polling["Step 3: Caller-Side Polling (every 10-15s)"]
+        direction TB
+        I{provider?}
+        I -->|hyperbrowser| J1[HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS]
+        I -->|browser_tool| J2[BROWSER_TOOL_WATCH_TASK]
+        J1 --> K1{status?}
+        K1 -->|running| J1
+        K1 -->|completed| L[Done - extract event URL]
+        K1 -->|failed| M[Error]
+        J2 --> K2{status?}
+        K2 -->|started| J2
+        K2 -->|finished| L
+        K2 -->|stopped| M
     end
 
     A & B & C & D & E --> F
-    F --> G
-    G --> H
-    H --> I
-    I --> J --> H
-    I --> K
-    I --> L
+    H1 & H2 --> I
 ```
 
 ## Input Parameters
@@ -84,16 +92,29 @@ Each recipe returns immediately with:
 {
   "platform": "luma|meetup|partiful",
   "status": "running",
-  "task_id": "<use for BROWSER_TOOL_WATCH_TASK>",
+  "task_id": "<use for polling>",
   "session_id": "<browser session>",
   "live_url": "https://...",
   "event_url": "",
+  "provider": "hyperbrowser|browser_tool",
+  "poll_tool": "HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS|BROWSER_TOOL_WATCH_TASK",
+  "poll_args_key": "task_id|taskId",
   "error": null,
   "success_url_pattern": "<platform-specific pattern>"
 }
 ```
 
-### Polling Response (via BROWSER_TOOL_WATCH_TASK)
+### Polling Response
+
+Use the `poll_tool` and `poll_args_key` from the recipe output to determine which tool to call.
+
+**Hyperbrowser** (`HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS`):
+
+| Field | Description |
+|-------|-------------|
+| `status` | `"running"` (still running), `"completed"` (done), `"failed"` (error) |
+
+**browser_tool** (`BROWSER_TOOL_WATCH_TASK`):
 
 | Field | Description |
 |-------|-------------|
@@ -128,7 +149,15 @@ RUBE_EXECUTE_RECIPE(
 )
 # Returns: {task_id, live_url, status: "running"}
 
-# Phase 2: Poll for completion
+# Phase 2: Poll for completion (use poll_tool from Phase 1 output)
+# Hyperbrowser (default):
+RUBE_MULTI_EXECUTE_TOOL(
+    tool_slug="HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS",
+    arguments={"task_id": "<task_id from Phase 1>"}
+)
+# Returns: {status: "running"|"completed"|"failed"}
+
+# browser_tool (fallback):
 RUBE_MULTI_EXECUTE_TOOL(
     tool_slug="BROWSER_TOOL_WATCH_TASK",
     arguments={"taskId": "<task_id from Phase 1>"}
@@ -242,22 +271,34 @@ RUBE_EXECUTE_RECIPE(
 
 ## Session Management
 
-Browser sessions persist across recipe executions. To maintain sessions:
+### Hyperbrowser (Default)
 
-1. **Initial Login:** Log in once via Composio connected accounts
-2. **Session Persists:** Subsequent runs use existing session
-3. **Session Expires:** Re-login when the browser task navigates to a login page instead of the create form
+Hyperbrowser uses persistent profiles that save login cookies across sessions. One-time setup per platform:
+
+1. **Initial Setup:** Run the **auth-setup** skill for each platform (Luma, Meetup, Partiful)
+2. **Login:** Open the live URL provided and complete Google OAuth login
+3. **Save Profile:** Add the profile ID to your `.env` file (`CCP_LUMA_PROFILE_ID`, etc.)
+4. **Sessions Persist:** Subsequent recipe runs reuse the saved profile with cookies
+5. **Re-Auth:** If a recipe returns `NEEDS_AUTH`, re-run auth-setup with the existing `profile_id` to re-login
 
 ```mermaid
 stateDiagram-v2
-    [*] --> NotLoggedIn
-    NotLoggedIn --> LoggedIn: Authenticate via Composio
-    LoggedIn --> SessionActive: Recipe Runs
-    SessionActive --> SessionActive: Multiple Runs
-    SessionActive --> SessionExpired: Time/Logout
-    SessionExpired --> NotLoggedIn: Task fails
-    NotLoggedIn --> LoggedIn: Re-authenticate
+    [*] --> NoProfile
+    NoProfile --> ProfileCreated: auth-setup skill (creates profile)
+    ProfileCreated --> LoggedIn: User logs in via liveUrl
+    LoggedIn --> SessionActive: Cookies saved to profile
+    SessionActive --> SessionActive: Multiple recipe runs
+    SessionActive --> SessionExpired: Cookies expire
+    SessionExpired --> LoggedIn: Re-run auth-setup (same profile_id)
 ```
+
+### browser_tool (Fallback)
+
+When `CCP_BROWSER_PROVIDER=browser_tool`, sessions are ephemeral (no auth persistence):
+
+1. **Initial Login:** Log in via Composio connected accounts
+2. **Session Persists:** Within the same browser session
+3. **Session Expires:** Re-authenticate via Composio dashboard
 
 ## Best Practices
 
