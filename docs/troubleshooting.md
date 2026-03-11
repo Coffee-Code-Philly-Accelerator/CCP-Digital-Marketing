@@ -21,20 +21,22 @@ Common issues and solutions for the CCP Digital Marketing automation system.
 
 **Cause:** Browser session is not logged into the platform
 
-**Solution:**
+**Solution (Hyperbrowser - default):**
 ```mermaid
 flowchart TD
-    A[Auth Error] --> B[Open Composio Dashboard]
-    B --> C[Check connected accounts]
-    C --> D{Account connected?}
-    D -->|No| E[Connect account in Composio]
-    D -->|Yes| F[Re-authenticate / refresh connection]
-    E --> G[Re-run recipe]
-    F --> G
-    G --> H{Still failing?}
-    H -->|Yes| I[Try different browser session]
+    A[NEEDS_AUTH Error] --> B{Using Hyperbrowser?}
+    B -->|Yes| C[Re-run auth-setup skill<br/>with existing profile_id]
+    C --> D[Open liveUrl and log in]
+    D --> E[Re-run recipe]
+    B -->|No| F[Open Composio Dashboard]
+    F --> G[Re-authenticate connection]
+    G --> E
+    E --> H{Still failing?}
+    H -->|Yes| I[Create new profile via auth-setup<br/>without profile_id]
     H -->|No| J[Success!]
 ```
+
+> **Tip:** When using Hyperbrowser, re-running auth-setup with the same `profile_id` preserves the profile — you just re-login. No need to update `.env`.
 
 ### Form Filling Fails
 
@@ -78,10 +80,18 @@ flowchart TD
 
 **Cause:** Event creation recipes use fire-and-forget pattern. They start a browser task and return immediately with a `task_id`. The actual event creation happens asynchronously.
 
-**Solution:** After `RUBE_EXECUTE_RECIPE` returns, poll `BROWSER_TOOL_WATCH_TASK` using `RUBE_MULTI_EXECUTE_TOOL`:
+**Solution:** After `RUBE_EXECUTE_RECIPE` returns, poll using the tool indicated by the recipe's `poll_tool` field:
+
+**Hyperbrowser (default):**
+1. Extract `task_id` from the recipe output
+2. Call `RUBE_MULTI_EXECUTE_TOOL` with `tool_slug="HYPERBROWSER_GET_BROWSER_USE_TASK_STATUS"` and `arguments={"task_id": "<task_id>"}`
+3. Check `status`: "running" (still running), "completed" (done), "failed" (error)
+4. Poll every 10-15 seconds until completed or failed
+
+**browser_tool (fallback):**
 1. Extract `task_id` from the recipe output
 2. Call `RUBE_MULTI_EXECUTE_TOOL` with `tool_slug="BROWSER_TOOL_WATCH_TASK"` and `arguments={"taskId": "<task_id>"}`
-3. Check `status` in the response: "started" (still running), "finished" (done), "stopped" (failed)
+3. Check `status`: "started" (still running), "finished" (done), "stopped" (failed)
 4. Poll every 10-15 seconds until finished or stopped
 
 ---
@@ -175,11 +185,17 @@ flowchart TD
 
 **Symptom:** Event creation recipe's browser task navigates to login page
 
-**Solution:**
-1. The browser automation uses persistent sessions
-2. Sessions can expire after inactivity
-3. Re-authenticate the platform connection in Composio
-4. Re-run the recipe
+**Solution (Hyperbrowser - default):**
+1. Hyperbrowser uses persistent profiles that save login cookies
+2. Cookies can expire after extended inactivity
+3. Re-run the **auth-setup** skill with the existing `profile_id` for the affected platform
+4. Log in via the live URL provided
+5. Re-run the recipe (no `.env` changes needed — same profile ID)
+
+**Solution (browser_tool - fallback):**
+1. Sessions are ephemeral and don't persist auth
+2. Re-authenticate the platform connection in Composio dashboard
+3. Re-run the recipe
 
 ### Multiple Account Confusion
 

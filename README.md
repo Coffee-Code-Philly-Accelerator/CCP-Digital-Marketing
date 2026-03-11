@@ -633,13 +633,19 @@ If a recipe returns `NEEDS_AUTH`, re-run auth-setup with the existing `profile_i
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
 | `COMPOSIO_API_KEY` | Yes | - | Composio API authentication |
+| `CCP_COMPOSIO_API_BASE` | No | `https://backend.composio.dev/api/v1` | Composio API base URL |
 | `CCP_BROWSER_PROVIDER` | No | `hyperbrowser` | Browser provider: `hyperbrowser` or `browser_tool` |
 | `CCP_LUMA_PROFILE_ID` | No | - | Hyperbrowser profile UUID for Luma |
 | `CCP_MEETUP_PROFILE_ID` | No | - | Hyperbrowser profile UUID for Meetup |
 | `CCP_PARTIFUL_PROFILE_ID` | No | - | Hyperbrowser profile UUID for Partiful |
+| `CCP_LUMA_CREATE_URL` | No | `https://lu.ma/create` | Override Luma create page URL |
+| `CCP_PARTIFUL_CREATE_URL` | No | `https://partiful.com/create` | Override Partiful create page URL |
 | `CCP_DISCORD_CHANNEL_ID` | No | - | Discord channel for social promotion |
 | `CCP_FACEBOOK_PAGE_ID` | No | - | Facebook page for social promotion |
 | `CCP_MEETUP_GROUP_URL` | No | `https://www.meetup.com/code-coffee-philly` | Default Meetup group URL |
+| `CCP_HYPERBROWSER_LLM` | No | `claude-sonnet-4-20250514` | LLM for Hyperbrowser browser agent |
+| `CCP_HYPERBROWSER_MAX_STEPS` | No | `25` | Max agent steps per browser task |
+| `CCP_HYPERBROWSER_USE_STEALTH` | No | `true` | Stealth mode for anti-bot evasion |
 
 See `scripts/.env.example` for the full list including optional overrides.
 
@@ -669,6 +675,7 @@ CCP-Digital-Marketing/
 │   ├── partiful_create_event.py # Partiful event creation recipe (Hyperbrowser + browser_tool)
 │   ├── social_promotion.py      # Social promotion recipe (event-specific)
 │   ├── social_post.py           # Generic social post recipe
+│   ├── email_reply.py           # Email reply review recipe
 │   └── auth_setup.py            # Hyperbrowser auth profile setup
 ├── scripts/
 │   ├── recipe_client.py         # CLI client for recipe execution
@@ -681,6 +688,7 @@ CCP-Digital-Marketing/
 │   ├── partiful-create/         # Partiful event creation skill
 │   ├── social-promote/          # Social promotion skill (event-specific)
 │   ├── social-post/             # Generic social post skill
+│   ├── stage-event/             # Content staging with review gate
 │   └── full-workflow/           # Full workflow orchestration skill
 └── .gitignore
 ```
