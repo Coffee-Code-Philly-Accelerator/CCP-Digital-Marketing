@@ -312,6 +312,7 @@ def post_to_discord():
 
 
 # In generate_only mode, return copies + image without posting
+output = None
 if mode == "generate_only":
     print(f"[{datetime.utcnow().isoformat()}] generate_only mode: returning draft copies without posting")
     output = {
@@ -319,7 +320,6 @@ if mode == "generate_only":
         "copies": copies,
         "image_url": results["image_url"],
     }
-    output
 else:
     # Execute posts sequentially (ThreadPoolExecutor not supported in Rube runtime)
     # Twitter skipped until connection is restored
@@ -351,4 +351,5 @@ else:
     print(f"Discord: {results['discord_posted']}")
 
     output = results
-    output
+
+output

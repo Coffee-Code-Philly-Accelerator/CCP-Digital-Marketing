@@ -210,9 +210,12 @@ class TestGenerateOnlyMode:
         _run_recipe(monkeypatch, base_env, tool_fn=tool_fn)
 
         posting_tools = [
-            "LINKEDIN_GET_MY_INFO", "LINKEDIN_CREATE_LINKED_IN_POST",
-            "INSTAGRAM_GET_USER_INFO", "INSTAGRAM_CREATE_MEDIA_CONTAINER",
-            "FACEBOOK_CREATE_POST", "DISCORDBOT_CREATE_MESSAGE",
+            "LINKEDIN_GET_MY_INFO",
+            "LINKEDIN_CREATE_LINKED_IN_POST",
+            "INSTAGRAM_GET_USER_INFO",
+            "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+            "FACEBOOK_CREATE_POST",
+            "DISCORDBOT_CREATE_MESSAGE",
         ]
         for tool in posting_tools:
             assert tool not in tool_calls, f"{tool} should not be called in generate_only mode"
@@ -237,8 +240,11 @@ class TestPublishOnlyMode:
 
     def test_skips_llm_and_gemini(self, monkeypatch, base_env):
         copies = {
-            "twitter": "t", "linkedin": "l", "instagram": "i",
-            "facebook": "f", "discord": "d",
+            "twitter": "t",
+            "linkedin": "l",
+            "instagram": "i",
+            "facebook": "f",
+            "discord": "d",
         }
         base_env["mode"] = "publish_only"
         base_env["pre_generated_copies"] = json.dumps(copies)
