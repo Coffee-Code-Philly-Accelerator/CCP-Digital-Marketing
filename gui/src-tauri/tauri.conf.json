@@ -1,11 +1,10 @@
 {
-  "productName": "CCP Cache Viewer",
-  "version": "0.1.0",
-  "identifier": "com.ccp.cache-viewer",
+  "productName": "CCP Digital Marketing",
+  "version": "0.2.0",
+  "identifier": "com.ccp.digital-marketing",
   "build": {
     "beforeDevCommand": "",
     "beforeBuildCommand": "",
-    "devUrl": "../src",
     "frontendDist": "../src"
   },
   "app": {
@@ -14,9 +13,9 @@
     },
     "windows": [
       {
-        "title": "CCP Telemetry Cache Viewer",
-        "width": 1200,
-        "height": 800,
+        "title": "CCP Digital Marketing",
+        "width": 1400,
+        "height": 900,
         "resizable": true,
         "fullscreen": false
       }

@@ -1,7 +1,8 @@
 //! Database query functions for Tauri commands
 
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePool, Row};
+use sqlx::sqlite::{SqlitePool, SqliteRow};
+use sqlx::Row;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkflowSummary {
@@ -41,8 +42,8 @@ pub async fn list_workflows(
 
     query.push_str(" ORDER BY created_at DESC LIMIT 100");
 
-    let rows = sqlx::query(&query)
-        .fetch_all(&**pool)
+    let rows: Vec<SqliteRow> = sqlx::query(&query)
+        .fetch_all(pool.inner())
         .await
         .map_err(|e| format!("Database query failed: {}", e))?;
 
@@ -67,11 +68,11 @@ pub async fn get_workflow_tool_calls(
     pool: tauri::State<'_, SqlitePool>,
     workflow_id: i64,
 ) -> Result<Vec<ToolCallSummary>, String> {
-    let rows = sqlx::query(
+    let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT id, tool_name, status, latency_ms, created_at FROM tool_calls WHERE workflow_id = ? ORDER BY created_at ASC"
     )
     .bind(workflow_id)
-    .fetch_all(&**pool)
+    .fetch_all(pool.inner())
     .await
     .map_err(|e| format!("Database query failed: {}", e))?;
 
@@ -97,7 +98,7 @@ pub async fn search_correlation(
 ) -> Result<Vec<WorkflowSummary>, String> {
     let search_pattern = format!("%{}%", artifact);
 
-    let rows = sqlx::query(
+    let rows: Vec<SqliteRow> = sqlx::query(
         r#"
         SELECT DISTINCT w.id, w.user_id, w.workflow_type, w.status, w.created_at, w.updated_at
         FROM workflows w
@@ -109,7 +110,7 @@ pub async fn search_correlation(
     )
     .bind(&search_pattern)
     .bind(&search_pattern)
-    .fetch_all(&**pool)
+    .fetch_all(pool.inner())
     .await
     .map_err(|e| format!("Database query failed: {}", e))?;
 
@@ -142,7 +143,7 @@ pub async fn cleanup_expired(
 
     let result = sqlx::query("DELETE FROM workflows WHERE created_at < ?")
         .bind(cutoff)
-        .execute(&**pool)
+        .execute(pool.inner())
         .await
         .map_err(|e| format!("Database query failed: {}", e))?;
 

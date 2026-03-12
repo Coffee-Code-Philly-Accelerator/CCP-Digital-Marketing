@@ -63,3 +63,10 @@ htmlcov/
 
 # Composio
 .composio/
+
+# Draft files (event-specific content, not tracked)
+drafts/*.json
+
+# Rust / Tauri
+gui/src-tauri/target/
+gui/src-tauri/gen/

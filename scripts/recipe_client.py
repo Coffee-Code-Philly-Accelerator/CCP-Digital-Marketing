@@ -401,6 +401,129 @@ def full_workflow(
     }
 
 
+def generate_drafts(
+    client: ComposioRecipeClient,
+    title: str,
+    date: str,
+    time: str,
+    location: str,
+    description: str,
+    event_url: str,
+    discord_channel_id: str = "",
+    facebook_page_id: str = "",
+    skip_platforms: str = "",
+) -> dict[str, Any]:
+    """
+    Generate social media draft copies without posting.
+
+    Calls the social promotion recipe with mode=generate_only to get
+    AI-generated copies + image, then saves them as a local draft file.
+
+    Returns:
+        Dict with draft filepath and generated content
+    """
+    from scripts.draft_store import build_draft, save_draft
+
+    input_data = {
+        "event_title": title,
+        "event_date": date,
+        "event_time": time,
+        "event_location": location,
+        "event_description": description,
+        "event_url": event_url,
+        "discord_channel_id": discord_channel_id,
+        "facebook_page_id": facebook_page_id,
+        "skip_platforms": skip_platforms,
+        "mode": "generate_only",
+    }
+
+    result = client.execute_recipe(RECIPE_IDS["social_promotion"], input_data)
+
+    # Extract copies and image_url from recipe result
+    copies = result.get("copies", {})
+    image_url = result.get("image_url", "")
+
+    if not copies:
+        print(f"[{ComposioRecipeClient._timestamp()}] Warning: No copies returned from recipe")
+        return result
+
+    drafts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "drafts")
+    event = {
+        "title": title,
+        "date": date,
+        "time": time,
+        "location": location,
+        "description": description,
+        "url": event_url,
+    }
+    platform_config = {
+        "discord_channel_id": discord_channel_id,
+        "facebook_page_id": facebook_page_id,
+        "skip_platforms": skip_platforms,
+    }
+    draft = build_draft(event, copies, image_url, platform_config)
+    filepath = save_draft(drafts_dir, draft)
+    print(f"[{ComposioRecipeClient._timestamp()}] Draft saved: {filepath}")
+
+    return {"draft_filepath": filepath, "recipe_result": result}
+
+
+def publish_from_draft(
+    client: ComposioRecipeClient,
+    filepath: str,
+) -> dict[str, Any]:
+    """
+    Publish an approved draft to social media platforms.
+
+    Loads the draft, validates it's approved, then calls the social
+    promotion recipe with mode=publish_only and pre_generated_copies.
+
+    Returns:
+        Recipe execution result with post confirmations
+    """
+    from scripts.draft_store import (
+        load_draft,
+        save_draft,
+        set_draft_status,
+        set_publish_results,
+        validate_draft_for_publish,
+    )
+
+    draft = load_draft(filepath)
+    error = validate_draft_for_publish(draft)
+    if error:
+        return {"error": f"Draft validation failed: {error}"}
+
+    event = draft["event"]
+    input_data = {
+        "event_title": event["title"],
+        "event_date": event["date"],
+        "event_time": event["time"],
+        "event_location": event["location"],
+        "event_description": event["description"],
+        "event_url": event.get("url", ""),
+        "discord_channel_id": draft.get("platform_config", {}).get("discord_channel_id", ""),
+        "facebook_page_id": draft.get("platform_config", {}).get("facebook_page_id", ""),
+        "skip_platforms": draft.get("platform_config", {}).get("skip_platforms", ""),
+        "image_url": draft.get("image_url", ""),
+        "mode": "publish_only",
+        "pre_generated_copies": json.dumps(draft["copies"]),
+    }
+
+    result = client.execute_recipe(RECIPE_IDS["social_promotion"], input_data)
+
+    # Update draft with results
+    new_status = "published" if "error" not in result else "failed"
+    draft = set_publish_results(draft, result)
+    draft = set_draft_status(draft, new_status)
+
+    drafts_dir = os.path.dirname(filepath)
+    save_draft(drafts_dir, draft)
+    print(f"[{ComposioRecipeClient._timestamp()}] Draft updated: {filepath} -> {new_status}")
+
+    return result
+
+
 def post_to_social(
     client: ComposioRecipeClient,
     topic: str,
@@ -572,6 +695,25 @@ Environment Variables:
     social_post_parser.add_argument("--facebook-page", default="", help="Facebook page ID")
     social_post_parser.add_argument("--skip", default="", help="Platforms to skip")
 
+    # generate-drafts command
+    gen_draft_parser = subparsers.add_parser("generate-drafts", help="Generate social media drafts without posting")
+    add_common_args(gen_draft_parser)
+    gen_draft_parser.add_argument("--event-url", required=True, help="Primary event RSVP URL")
+    gen_draft_parser.add_argument("--discord-channel", default="", help="Discord channel ID")
+    gen_draft_parser.add_argument("--facebook-page", default="", help="Facebook page ID")
+    gen_draft_parser.add_argument("--skip", default="", help="Platforms to skip")
+
+    # list-drafts command
+    subparsers.add_parser("list-drafts", help="List all saved drafts")
+
+    # approve-draft command
+    approve_parser = subparsers.add_parser("approve-draft", help="Approve a draft for publishing")
+    approve_parser.add_argument("--file", required=True, help="Path to draft JSON file")
+
+    # publish-draft command
+    publish_parser = subparsers.add_parser("publish-draft", help="Publish an approved draft")
+    publish_parser.add_argument("--file", required=True, help="Path to approved draft JSON file")
+
     # info command
     info_parser = subparsers.add_parser("info", help="Get recipe information")
     info_parser.add_argument(
@@ -648,6 +790,46 @@ Environment Variables:
             facebook_page_id=args.facebook_page,
             skip_platforms=args.skip,
         )
+    elif args.command == "generate-drafts":
+        result = generate_drafts(
+            client=client,
+            title=args.title,
+            date=args.date,
+            time=args.time,
+            location=args.location,
+            description=args.description,
+            event_url=args.event_url,
+            discord_channel_id=args.discord_channel,
+            facebook_page_id=args.facebook_page,
+            skip_platforms=args.skip,
+        )
+    elif args.command == "list-drafts":
+        from scripts.draft_store import list_drafts
+
+        drafts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "drafts")
+        drafts = list_drafts(drafts_dir)
+        if not drafts:
+            print("No drafts found.")
+            sys.exit(0)
+        print(f"\n{'Status':<12} {'Title':<30} {'Date':<20} {'Filename'}")
+        print("-" * 90)
+        for d in drafts:
+            print(f"{d['status']:<12} {d['title']:<30} {d['date']:<20} {d['filename']}")
+        sys.exit(0)
+    elif args.command == "approve-draft":
+        from scripts.draft_store import load_draft, save_draft, set_draft_status
+
+        draft = load_draft(args.file)
+        if draft.get("status") != "draft":
+            print(f"Error: Draft status is '{draft.get('status')}', expected 'draft'")
+            sys.exit(1)
+        draft = set_draft_status(draft, "approved")
+        drafts_dir = os.path.dirname(args.file)
+        save_draft(drafts_dir, draft)
+        print(f"Draft approved: {args.file}")
+        sys.exit(0)
+    elif args.command == "publish-draft":
+        result = publish_from_draft(client=client, filepath=args.file)
     elif args.command == "info":
         if args.recipe in ("luma", "all"):
             print("\n--- Luma Create Event Recipe ---")

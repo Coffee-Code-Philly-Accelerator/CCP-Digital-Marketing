@@ -123,6 +123,9 @@ if not all([event_title, event_date, event_time, event_location, event_descripti
 
 skip_platforms = [p.strip().lower() for p in skip_platforms_str.split(",") if p.strip()]
 
+mode = os.environ.get("mode", "").lower()  # "", "generate_only", "publish_only"
+pre_generated_copies = os.environ.get("pre_generated_copies", "")
+
 results = {
     "twitter_posted": "skipped: connection not available",
     "linkedin_posted": "skipped",
@@ -134,9 +137,12 @@ results = {
 }
 
 # Step 1: Generate promotional image (or reuse provided one)
+# In publish_only mode, image_url must come from existing_image_url (provided input)
 if existing_image_url:
     results["image_url"] = existing_image_url
     print(f"[{datetime.utcnow().isoformat()}] Using provided image: {results['image_url']}")
+elif mode == "publish_only":
+    print(f"[{datetime.utcnow().isoformat()}] publish_only mode: no image provided, skipping generation")
 else:
     print(f"[{datetime.utcnow().isoformat()}] Generating promotional image...")
     image_prompt = f"Create a modern, eye-catching event promotional graphic for: {event_title}. Style: professional, vibrant colors, suitable for social media. Do not include any text in the image."
@@ -152,9 +158,18 @@ else:
     else:
         print(f"[{datetime.utcnow().isoformat()}] Image generation failed: {image_error}")
 
-# Step 2: Generate platform-specific copy
-print(f"[{datetime.utcnow().isoformat()}] Generating platform-specific copy...")
-copy_prompt = f"""Generate 5 platform-specific social media posts for this event:
+# Step 2: Generate platform-specific copy (or use pre-generated copies)
+if pre_generated_copies:
+    print(f"[{datetime.utcnow().isoformat()}] Using pre-generated copies (publish_only mode)")
+    copies = (
+        extract_json_from_text(pre_generated_copies) if isinstance(pre_generated_copies, str) else pre_generated_copies
+    )
+    required_keys = ["twitter", "linkedin", "instagram", "facebook", "discord"]
+    if not copies or not all(k in copies for k in required_keys):
+        raise ValueError("pre_generated_copies must contain all 5 platform keys")
+else:
+    print(f"[{datetime.utcnow().isoformat()}] Generating platform-specific copy...")
+    copy_prompt = f"""Generate 5 platform-specific social media posts for this event:
 
 Event: {event_title}
 Date: {event_date} at {event_time}
@@ -172,22 +187,9 @@ Guidelines:
 - Discord: Markdown formatting, casual tone
 """
 
-copy_response, copy_error = invoke_llm(copy_prompt)
-if copy_error:
-    print(f"[{datetime.utcnow().isoformat()}] Copy generation failed, using defaults")
-    default_copy = f"{event_title}\n\n{event_date} at {event_time}\n{event_location}\n\nRSVP: {event_url}"
-    copies = {
-        "twitter": default_copy[:280],
-        "linkedin": default_copy,
-        "instagram": default_copy,
-        "facebook": default_copy,
-        "discord": f"**{event_title}**\n\n{default_copy}",
-    }
-else:
-    copies = extract_json_from_text(copy_response)
-    required_keys = ["twitter", "linkedin", "instagram", "facebook", "discord"]
-    if not copies or not all(k in copies for k in required_keys):
-        print(f"[{datetime.utcnow().isoformat()}] JSON extraction incomplete, using default copy")
+    copy_response, copy_error = invoke_llm(copy_prompt)
+    if copy_error:
+        print(f"[{datetime.utcnow().isoformat()}] Copy generation failed, using defaults")
         default_copy = f"{event_title}\n\n{event_date} at {event_time}\n{event_location}\n\nRSVP: {event_url}"
         copies = {
             "twitter": default_copy[:280],
@@ -196,6 +198,19 @@ else:
             "facebook": default_copy,
             "discord": f"**{event_title}**\n\n{default_copy}",
         }
+    else:
+        copies = extract_json_from_text(copy_response)
+        required_keys = ["twitter", "linkedin", "instagram", "facebook", "discord"]
+        if not copies or not all(k in copies for k in required_keys):
+            print(f"[{datetime.utcnow().isoformat()}] JSON extraction incomplete, using default copy")
+            default_copy = f"{event_title}\n\n{event_date} at {event_time}\n{event_location}\n\nRSVP: {event_url}"
+            copies = {
+                "twitter": default_copy[:280],
+                "linkedin": default_copy,
+                "instagram": default_copy,
+                "facebook": default_copy,
+                "discord": f"**{event_title}**\n\n{default_copy}",
+            }
 
 
 # Step 3: Post to each platform
@@ -296,34 +311,44 @@ def post_to_discord():
     return "success" if not error else f"failed: {error}"
 
 
-# Execute posts sequentially (ThreadPoolExecutor not supported in Rube runtime)
-# Twitter skipped until connection is restored
-results["linkedin_posted"] = post_to_linkedin()
-results["instagram_posted"] = post_to_instagram()
-results["facebook_posted"] = post_to_facebook()
-results["discord_posted"] = post_to_discord()
+# In generate_only mode, return copies + image without posting
+if mode == "generate_only":
+    print(f"[{datetime.utcnow().isoformat()}] generate_only mode: returning draft copies without posting")
+    output = {
+        "status": "DRAFT_GENERATED",
+        "copies": copies,
+        "image_url": results["image_url"],
+    }
+    output
+else:
+    # Execute posts sequentially (ThreadPoolExecutor not supported in Rube runtime)
+    # Twitter skipped until connection is restored
+    results["linkedin_posted"] = post_to_linkedin()
+    results["instagram_posted"] = post_to_instagram()
+    results["facebook_posted"] = post_to_facebook()
+    results["discord_posted"] = post_to_discord()
 
-# Build summary
-success_count = sum(
-    1
-    for s in [
-        results["twitter_posted"],
-        results["linkedin_posted"],
-        results["instagram_posted"],
-        results["facebook_posted"],
-        results["discord_posted"],
-    ]
-    if s == "success"
-)
+    # Build summary
+    success_count = sum(
+        1
+        for s in [
+            results["twitter_posted"],
+            results["linkedin_posted"],
+            results["instagram_posted"],
+            results["facebook_posted"],
+            results["discord_posted"],
+        ]
+        if s == "success"
+    )
 
-results["summary"] = f"Posted to {success_count}/5 platforms"
+    results["summary"] = f"Posted to {success_count}/5 platforms"
 
-print(f"[{datetime.utcnow().isoformat()}] Workflow complete: {results['summary']}")
-print(f"Twitter: {results['twitter_posted']}")
-print(f"LinkedIn: {results['linkedin_posted']}")
-print(f"Instagram: {results['instagram_posted']}")
-print(f"Facebook: {results['facebook_posted']}")
-print(f"Discord: {results['discord_posted']}")
+    print(f"[{datetime.utcnow().isoformat()}] Workflow complete: {results['summary']}")
+    print(f"Twitter: {results['twitter_posted']}")
+    print(f"LinkedIn: {results['linkedin_posted']}")
+    print(f"Instagram: {results['instagram_posted']}")
+    print(f"Facebook: {results['facebook_posted']}")
+    print(f"Discord: {results['discord_posted']}")
 
-output = results
-output
+    output = results
+    output

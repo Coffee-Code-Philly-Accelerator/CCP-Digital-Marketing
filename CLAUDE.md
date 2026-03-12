@@ -47,9 +47,44 @@ python scripts/recipe_client.py social-post \
 python scripts/recipe_client.py info
 ```
 
+## Development Commands
+
+### Tauri GUI (gui/)
+
+```bash
+# Build the desktop app
+cd gui/src-tauri && cargo build
+
+# Run the desktop app (requires COMPOSIO_API_KEY for recipe execution)
+cd gui/src-tauri && cargo run
+
+# Build release
+cd gui/src-tauri && cargo build --release
+```
+
 ## Architecture
 
 **Rube MCP Recipes** (`recipes/`) - Self-contained Python scripts for Composio's Rube MCP runtime. These use `os.environ.get()` for inputs, `run_composio_tool()` for APIs, `invoke_llm()` for AI. Output is a bare variable (no return statement). Include mock implementations for local testing.
+
+### Tauri GUI (`gui/`)
+
+Desktop app providing both workflow telemetry viewing and recipe execution. Built with Tauri v2 (Rust backend + vanilla JS frontend).
+
+**Backend modules** (`gui/src-tauri/src/`):
+
+| Module | Purpose |
+|--------|---------|
+| `config.rs` | `AppConfig` struct, recipe IDs, platform constants (reads `COMPOSIO_API_KEY` + `CCP_*` env vars) |
+| `composio.rs` | `ComposioClient` — HTTP client mirroring Python `ComposioRecipeClient` (execute, poll, get details) |
+| `progress.rs` | `RecipeProgressEvent` + `emit_progress()` — emits `recipe-progress` Tauri events to frontend |
+| `recipe_commands.rs` | 5 IPC commands: `create_event`, `promote_event`, `social_post`, `full_workflow`, `get_recipe_info` |
+| `draft.rs` | Draft types + pure functions (slugify, build, validate) + file I/O — mirrors `scripts/draft_store.py` |
+| `draft_commands.rs` | 5 IPC commands: `generate_drafts`, `list_drafts_cmd`, `load_draft_cmd`, `approve_draft`, `publish_draft` |
+| `db.rs` | Telemetry SQLite queries (existing) |
+
+**Frontend** (`gui/src/`): 4-tab UI — Telemetry, Create Event, Social Post, Drafts. Real-time progress via Tauri event listener. Dark theme matching VS Code palette (#1e1e1e / #252526 / #4ec9b0).
+
+**Draft interop:** Rust GUI and Python CLI use identical JSON schema for drafts in `drafts/`. Files created by either are readable by both.
 
 ## Recipe Code Pattern
 
@@ -174,6 +209,61 @@ Recipes accept skip lists: `{"skip_platforms": "meetup,facebook"}`
 | `NEEDS_AUTH` | Browser session expired | Log in manually, re-run |
 | `FAILED` | Error occurred | Check error message |
 | `SKIPPED` | Intentionally skipped | Via skip_platforms param |
+| `DRAFT_GENERATED` | Draft copies created (not posted) | Review, edit, approve, then publish |
+
+## Draft Workflow (Social Promotion)
+
+The social promotion recipe supports a two-phase draft workflow for human review before publishing.
+
+### Recipe `mode` Parameter
+
+| Mode | Image Gen | Copy Gen | Posting | Output |
+|------|-----------|----------|---------|--------|
+| `""` (default) | Yes | Yes | Yes | Current output (backwards compatible) |
+| `generate_only` | Yes | Yes | Skip | `{"status": "DRAFT_GENERATED", "copies": {...}, "image_url": "..."}` |
+| `publish_only` | Skip (uses `image_url`) | Skip (uses `pre_generated_copies`) | Yes | Posting results |
+
+### Draft JSON Schema
+
+Drafts are saved as JSON files in `drafts/` at the project root:
+
+```json
+{
+  "version": 1,
+  "status": "draft|approved|published|failed",
+  "created_at": "ISO-8601",
+  "updated_at": "ISO-8601",
+  "event": {"title": "", "date": "", "time": "", "location": "", "description": "", "url": ""},
+  "image_url": "https://...",
+  "copies": {"twitter": "", "linkedin": "", "instagram": "", "facebook": "", "discord": ""},
+  "platform_config": {"discord_channel_id": "", "facebook_page_id": "", "skip_platforms": ""},
+  "publish_results": null
+}
+```
+
+**Status lifecycle:** `draft` -> `approved` -> `published` (or `failed`)
+
+### CLI Commands
+
+```bash
+# Generate drafts (calls recipe with mode=generate_only, saves to drafts/)
+python scripts/recipe_client.py generate-drafts \
+  --title "Event" --date "March 20, 2026" --time "6:00 PM EST" \
+  --location "Philly" --description "Desc" --event-url "https://example.com"
+
+# List all drafts
+python scripts/recipe_client.py list-drafts
+
+# Approve a draft
+python scripts/recipe_client.py approve-draft --file drafts/<filename>.json
+
+# Publish an approved draft
+python scripts/recipe_client.py publish-draft --file drafts/<filename>.json
+```
+
+### Draft Store Module
+
+`scripts/draft_store.py` provides pure functions (`slugify`, `build_draft`, `set_draft_status`, `validate_draft_for_publish`) and I/O boundary functions (`save_draft`, `load_draft`, `list_drafts`).
 
 ## Environment Variables
 
@@ -193,6 +283,9 @@ Recipes accept skip lists: `{"skip_platforms": "meetup,facebook"}`
 | `CCP_HYPERBROWSER_LLM` | No | `claude-sonnet-4-20250514` | LLM for Hyperbrowser browser agent |
 | `CCP_HYPERBROWSER_MAX_STEPS` | No | `25` | Max agent steps per browser task |
 | `CCP_HYPERBROWSER_USE_STEALTH` | No | `true` | Stealth mode for anti-bot evasion |
+| `CCP_CACHE_DB_PATH` | No | `~/.claude/cache/state.db` | SQLite database for telemetry cache (GUI) |
+| `CCP_PROJECT_ROOT` | No | (auto-detected) | Project root for draft file resolution (GUI) |
+| `CCP_DRAFTS_DIR` | No | `<project_root>/drafts` | Override drafts directory path (GUI) |
 
 **Override Precedence:** Recipe input parameters > Environment variables > Defaults
 

@@ -100,6 +100,67 @@ RUBE_EXECUTE_RECIPE(
 
 This avoids redundant Gemini image generation when an image was already created during event creation.
 
+## Draft Workflow (Two-Phase)
+
+The social promotion recipe supports a two-phase draft workflow for human review before publishing.
+
+### Phase A: Generate Drafts
+
+Call the recipe with `mode=generate_only` to generate AI copies + image without posting:
+
+```
+RUBE_EXECUTE_RECIPE(
+    recipe_id="rcp_X65IirgPhwh3",
+    input_data={
+        "event_title": "<title>",
+        "event_date": "<date>",
+        "event_time": "<time>",
+        "event_location": "<location>",
+        "event_description": "<description>",
+        "event_url": "<url>",
+        "mode": "generate_only"
+    }
+)
+```
+
+Returns:
+```json
+{
+  "status": "DRAFT_GENERATED",
+  "copies": {"twitter": "...", "linkedin": "...", "instagram": "...", "facebook": "...", "discord": "..."},
+  "image_url": "https://..."
+}
+```
+
+Save the result as a local draft file in `drafts/` using `draft_store.save_draft()`. Present the copies to the user for review and editing.
+
+### Phase B: Publish Approved Draft
+
+After the user approves (and optionally edits) the copies, call the recipe with `mode=publish_only` and `pre_generated_copies`:
+
+```
+RUBE_EXECUTE_RECIPE(
+    recipe_id="rcp_X65IirgPhwh3",
+    input_data={
+        "event_title": "<title>",
+        "event_date": "<date>",
+        "event_time": "<time>",
+        "event_location": "<location>",
+        "event_description": "<description>",
+        "event_url": "<url>",
+        "image_url": "<image_url from draft>",
+        "mode": "publish_only",
+        "pre_generated_copies": "{\"twitter\": \"...\", \"linkedin\": \"...\", ...}"
+    }
+)
+```
+
+This skips image generation and LLM copy generation, posting the pre-approved copies directly.
+
+### Skip Review (Direct Publish)
+
+To post without review, omit the `mode` parameter (existing behavior is preserved).
+
 ## Platform Notes
 
 - **Twitter**: Posts text with hashtags. Truncated to 280 chars.
