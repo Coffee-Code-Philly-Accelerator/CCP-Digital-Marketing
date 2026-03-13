@@ -38,14 +38,14 @@ async function submitEventForm(mode) {
 
     const args = {
         title, date, time, location, description,
-        meetupUrl: meetupUrl || null,
-        skipPlatforms: skipPlatforms || null,
+        meetup_url: meetupUrl || null,
+        skip_platforms: skipPlatforms || null,
         provider: provider || null,
     };
 
     if (mode === 'full') {
-        args.discordChannelId = discordChannel || null;
-        args.facebookPageId = facebookPage || null;
+        args.discord_channel_id = discordChannel || null;
+        args.facebook_page_id = facebookPage || null;
     }
 
     const command = mode === 'full' ? 'full_workflow' : 'create_event';
@@ -88,11 +88,11 @@ async function submitPromoteForm() {
     try {
         const result = await invoke('promote_event', {
             title, date, time, location, description,
-            eventUrl,
-            discordChannelId: discordChannel || null,
-            facebookPageId: facebookPage || null,
-            skipPlatforms: null,
-            imageUrl: null,
+            event_url: eventUrl,
+            discord_channel_id: discordChannel || null,
+            facebook_page_id: facebookPage || null,
+            skip_platforms: null,
+            image_url: null,
         });
         resultDiv.innerHTML = `<pre class="result-json">${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
     } catch (error) {

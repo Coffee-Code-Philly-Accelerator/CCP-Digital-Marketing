@@ -155,10 +155,11 @@ async function submitGenerateDrafts() {
 
     try {
         const result = await invoke('generate_drafts', {
-            title, date, time, location, description, eventUrl,
-            discordChannelId: discordChannel || null,
-            facebookPageId: facebookPage || null,
-            skipPlatforms: null,
+            title, date, time, location, description,
+            event_url: eventUrl,
+            discord_channel_id: discordChannel || null,
+            facebook_page_id: facebookPage || null,
+            skip_platforms: null,
         });
         resultDiv.innerHTML = `<pre class="result-json">${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
         loadDraftsList();

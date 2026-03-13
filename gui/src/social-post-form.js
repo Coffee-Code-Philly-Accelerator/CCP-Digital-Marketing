@@ -39,14 +39,14 @@ async function submitSocialPost() {
         const result = await invoke('social_post', {
             topic, content,
             url: url || null,
-            imageUrl: imageUrl || null,
-            imagePrompt: imagePrompt || null,
+            image_url: imageUrl || null,
+            image_prompt: imagePrompt || null,
             tone: tone || null,
             cta: cta || null,
             hashtags: hashtags || null,
-            discordChannelId: discordChannel || null,
-            facebookPageId: facebookPage || null,
-            skipPlatforms: skipPlatforms || null,
+            discord_channel_id: discordChannel || null,
+            facebook_page_id: facebookPage || null,
+            skip_platforms: skipPlatforms || null,
         });
         resultDiv.innerHTML = `<pre class="result-json">${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
     } catch (error) {
