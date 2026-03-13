@@ -130,7 +130,7 @@ Status: Running in background (compilation phase)
 
 ---
 
-## Known Issues (None Blocking)
+## Known Issues (Non-blocking)
 
 ### 1. Integration Test Still Running
 **Status**: Background compilation in progress

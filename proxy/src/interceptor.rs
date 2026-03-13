@@ -102,8 +102,11 @@ async fn handle_request(
     let request_json = String::from_utf8_lossy(&body_bytes).to_string();
     let masked_request = mask_pii(&request_json);
 
-    // Build upstream request
-    let upstream_url = format!("{}{}", upstream_base, path);
+    // Build upstream request (preserve query string)
+    let upstream_url = match uri.query() {
+        Some(q) => format!("{}{}?{}", upstream_base, path, q),
+        None => format!("{}{}", upstream_base, path),
+    };
     let mut upstream_req = Request::builder()
         .method(method.clone())
         .uri(&upstream_url);
