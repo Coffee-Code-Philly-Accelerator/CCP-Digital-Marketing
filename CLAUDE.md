@@ -201,6 +201,9 @@ def check_needs_auth(page_content):
 ### Skip Platforms
 Recipes accept skip lists: `{"skip_platforms": "meetup,facebook"}`
 
+### Duplicated Recipe Helpers
+`sanitize_input()`, `extract_data()`, and `extract_json_from_text()` are duplicated across recipe files (required by Rube's self-contained runtime). Browser-automation recipes (luma, meetup, partiful) include apostrophe escaping (`'` → `\u2019`); non-browser recipes omit it. When updating these helpers, sync all copies and preserve this intentional divergence.
+
 ## Status Codes
 
 | Status | Meaning | Action |

@@ -5,7 +5,8 @@ RECIPE ID: rcp_NLnlCNmIcIuN
 FLOW: Read Email > Auto-detect Tone > Generate/Review Draft > Pass 1 (Clarity) > Pass 2 (Grammar) > Pass 3 (Tone) > Final Reply
 
 VERSION HISTORY:
-v1 (current): Initial version - three-pass review system with Gmail/Outlook integration
+v2 (current): Fixed flow control - early error paths now properly prevent fall-through via output guards
+v1: Initial version - three-pass review system with Gmail/Outlook integration
 
 API LEARNINGS:
 - GMAIL_GET_MESSAGE: Returns data.data with 'id', 'threadId', 'snippet', 'payload' (headers + body parts)
@@ -249,6 +250,8 @@ elif mode == "review":
 
 print(f"[{datetime.utcnow().isoformat()}] Mode: {mode}, Email Source: {email_source or 'N/A'}")
 
+output = None
+
 # ============================================================================
 # Phase 1: Read Incoming Email (Generate Mode Only)
 # ============================================================================
@@ -258,6 +261,7 @@ incoming_body = ""
 incoming_sender = ""
 detected_tone = ""
 draft_reply = ""
+target_tone = ""
 
 if mode == "generate":
     print(f"[{datetime.utcnow().isoformat()}] Reading email from {email_source}...")
@@ -272,14 +276,13 @@ if mode == "generate":
                 "mode": mode,
             }
             print(f"[{datetime.utcnow().isoformat()}] Error: {email_error}")
-            output
+        else:
+            email_data = extract_data(email_result)
+            payload = email_data.get("payload", {})
 
-        email_data = extract_data(email_result)
-        payload = email_data.get("payload", {})
-
-        incoming_subject = extract_email_subject_gmail(payload)
-        incoming_body = extract_email_body_gmail(payload)
-        incoming_sender = extract_email_sender_gmail(payload)
+            incoming_subject = extract_email_subject_gmail(payload)
+            incoming_body = extract_email_body_gmail(payload)
+            incoming_sender = extract_email_sender_gmail(payload)
 
     elif email_source == "outlook":
         email_result, email_error = run_composio_tool("OUTLOOK_GET_MESSAGE", {"message_id": message_id})
@@ -291,40 +294,39 @@ if mode == "generate":
                 "mode": mode,
             }
             print(f"[{datetime.utcnow().isoformat()}] Error: {email_error}")
-            output
+        else:
+            email_data = extract_data(email_result)
+            incoming_subject = email_data.get("subject", "")
+            body_obj = email_data.get("body", {})
+            incoming_body = body_obj.get("content", "") if isinstance(body_obj, dict) else ""
+            from_obj = email_data.get("from", {})
+            if isinstance(from_obj, dict):
+                email_addr = from_obj.get("emailAddress", {})
+                incoming_sender = email_addr.get("address", "") if isinstance(email_addr, dict) else ""
 
-        email_data = extract_data(email_result)
-        incoming_subject = email_data.get("subject", "")
-        body_obj = email_data.get("body", {})
-        incoming_body = body_obj.get("content", "") if isinstance(body_obj, dict) else ""
-        from_obj = email_data.get("from", {})
-        if isinstance(from_obj, dict):
-            email_addr = from_obj.get("emailAddress", {})
-            incoming_sender = email_addr.get("address", "") if isinstance(email_addr, dict) else ""
-
-    if not incoming_body:
+    if output is None and not incoming_body:
         output = {
             "status": "FAILED",
             "error": "Could not extract email body from message",
             "mode": mode,
         }
         print(f"[{datetime.utcnow().isoformat()}] Error: Empty email body")
-        output
 
-    print(f"[{datetime.utcnow().isoformat()}] Email read successfully")
-    print(f"Subject: {incoming_subject}")
-    print(f"From: {incoming_sender}")
-    print(f"Body length: {len(incoming_body)} chars")
+    if output is None:
+        print(f"[{datetime.utcnow().isoformat()}] Email read successfully")
+        print(f"Subject: {incoming_subject}")
+        print(f"From: {incoming_sender}")
+        print(f"Body length: {len(incoming_body)} chars")
 
-    # Auto-detect tone
-    detected_tone = detect_tone_from_email(incoming_subject, incoming_body, incoming_sender)
-    print(f"[{datetime.utcnow().isoformat()}] Auto-detected tone: {detected_tone}")
+        # Auto-detect tone
+        detected_tone = detect_tone_from_email(incoming_subject, incoming_body, incoming_sender)
+        print(f"[{datetime.utcnow().isoformat()}] Auto-detected tone: {detected_tone}")
 
 # ============================================================================
-# Phase 2: Generate Reply (Generate Mode Only)
+# Phase 2: Generate Reply (Generate Mode) or Set Draft (Review Mode)
 # ============================================================================
 
-if mode == "generate":
+if output is None and mode == "generate":
     print(f"[{datetime.utcnow().isoformat()}] Generating reply draft...")
 
     # Use desired_tone override if provided, otherwise use detected tone
@@ -358,12 +360,11 @@ Return ONLY the reply text (no JSON, no additional commentary).
             "mode": mode,
         }
         print(f"[{datetime.utcnow().isoformat()}] Error: {generate_error}")
-        output
+    else:
+        draft_reply = generate_response.strip()
+        print(f"[{datetime.utcnow().isoformat()}] Reply generated: {len(draft_reply)} chars")
 
-    draft_reply = generate_response.strip()
-    print(f"[{datetime.utcnow().isoformat()}] Reply generated: {len(draft_reply)} chars")
-
-elif mode == "review":
+elif output is None and mode == "review":
     # In review mode, use the user-provided draft
     draft_reply = user_draft
     # Use desired_tone if provided, otherwise default to professional
@@ -375,12 +376,23 @@ elif mode == "review":
 # Phase 3: Three-Pass Sequential Review
 # ============================================================================
 
-print(f"[{datetime.utcnow().isoformat()}] Starting three-pass review...")
+pass1_issues = []
+pass1_summary = ""
+pass1_text = ""
+pass2_issues = []
+pass2_summary = ""
+pass2_text = ""
+pass3_issues = []
+pass3_summary = ""
+pass3_text = ""
+recipient_perception = ""
 
 # Pass 1: Clarity & Coherence
-print(f"[{datetime.utcnow().isoformat()}] Pass 1: Clarity & Coherence")
+if output is None:
+    print(f"[{datetime.utcnow().isoformat()}] Starting three-pass review...")
+    print(f"[{datetime.utcnow().isoformat()}] Pass 1: Clarity & Coherence")
 
-pass1_prompt = f"""Review this email draft for CLARITY and COHERENCE:
+    pass1_prompt = f"""Review this email draft for CLARITY and COHERENCE:
 
 {draft_reply}
 
@@ -401,32 +413,32 @@ Return JSON with this exact structure:
 If no issues found, return empty issues array but still return the text (even if unchanged).
 """
 
-pass1_response, pass1_error = invoke_llm(pass1_prompt)
+    pass1_response, pass1_error = invoke_llm(pass1_prompt)
 
-if pass1_error:
-    output = {
-        "status": "FAILED",
-        "error": f"Pass 1 (Clarity) failed: {pass1_error}",
-        "mode": mode,
-        "original_draft": draft_reply,
-    }
-    print(f"[{datetime.utcnow().isoformat()}] Pass 1 error: {pass1_error}")
-    output
+    if pass1_error:
+        output = {
+            "status": "FAILED",
+            "error": f"Pass 1 (Clarity) failed: {pass1_error}",
+            "mode": mode,
+            "original_draft": draft_reply,
+        }
+        print(f"[{datetime.utcnow().isoformat()}] Pass 1 error: {pass1_error}")
+    else:
+        pass1_result = extract_json_from_text(pass1_response)
+        pass1_issues = pass1_result.get("issues", [])
+        pass1_summary = pass1_result.get("summary", "No changes")
+        pass1_text = pass1_result.get("improved_text", draft_reply)
 
-pass1_result = extract_json_from_text(pass1_response)
-pass1_issues = pass1_result.get("issues", [])
-pass1_summary = pass1_result.get("summary", "No changes")
-pass1_text = pass1_result.get("improved_text", draft_reply)
+        if not pass1_text:
+            pass1_text = draft_reply
 
-if not pass1_text:
-    pass1_text = draft_reply
-
-print(f"[{datetime.utcnow().isoformat()}] Pass 1 complete: {len(pass1_issues)} issues, {len(pass1_text)} chars")
+        print(f"[{datetime.utcnow().isoformat()}] Pass 1 complete: {len(pass1_issues)} issues, {len(pass1_text)} chars")
 
 # Pass 2: Spelling & Grammar
-print(f"[{datetime.utcnow().isoformat()}] Pass 2: Spelling & Grammar")
+if output is None:
+    print(f"[{datetime.utcnow().isoformat()}] Pass 2: Spelling & Grammar")
 
-pass2_prompt = f"""Review this email draft for SPELLING and GRAMMAR:
+    pass2_prompt = f"""Review this email draft for SPELLING and GRAMMAR:
 
 {pass1_text}
 
@@ -447,37 +459,37 @@ Return JSON with this exact structure:
 If no issues found, return empty issues array but still return the text (even if unchanged).
 """
 
-pass2_response, pass2_error = invoke_llm(pass2_prompt)
+    pass2_response, pass2_error = invoke_llm(pass2_prompt)
 
-if pass2_error:
-    output = {
-        "status": "FAILED",
-        "error": f"Pass 2 (Grammar) failed: {pass2_error}",
-        "mode": mode,
-        "original_draft": draft_reply,
-        "pass1_clarity": {
-            "issues": pass1_issues,
-            "summary": pass1_summary,
-            "text": pass1_text,
-        },
-    }
-    print(f"[{datetime.utcnow().isoformat()}] Pass 2 error: {pass2_error}")
-    output
+    if pass2_error:
+        output = {
+            "status": "FAILED",
+            "error": f"Pass 2 (Grammar) failed: {pass2_error}",
+            "mode": mode,
+            "original_draft": draft_reply,
+            "pass1_clarity": {
+                "issues": pass1_issues,
+                "summary": pass1_summary,
+                "text": pass1_text,
+            },
+        }
+        print(f"[{datetime.utcnow().isoformat()}] Pass 2 error: {pass2_error}")
+    else:
+        pass2_result = extract_json_from_text(pass2_response)
+        pass2_issues = pass2_result.get("issues", [])
+        pass2_summary = pass2_result.get("summary", "No changes")
+        pass2_text = pass2_result.get("improved_text", pass1_text)
 
-pass2_result = extract_json_from_text(pass2_response)
-pass2_issues = pass2_result.get("issues", [])
-pass2_summary = pass2_result.get("summary", "No changes")
-pass2_text = pass2_result.get("improved_text", pass1_text)
+        if not pass2_text:
+            pass2_text = pass1_text
 
-if not pass2_text:
-    pass2_text = pass1_text
-
-print(f"[{datetime.utcnow().isoformat()}] Pass 2 complete: {len(pass2_issues)} issues, {len(pass2_text)} chars")
+        print(f"[{datetime.utcnow().isoformat()}] Pass 2 complete: {len(pass2_issues)} issues, {len(pass2_text)} chars")
 
 # Pass 3: Tone & Perception
-print(f"[{datetime.utcnow().isoformat()}] Pass 3: Tone & Perception")
+if output is None:
+    print(f"[{datetime.utcnow().isoformat()}] Pass 3: Tone & Perception")
 
-pass3_prompt = f"""Review this email draft for TONE and RECIPIENT PERCEPTION:
+    pass3_prompt = f"""Review this email draft for TONE and RECIPIENT PERCEPTION:
 
 {pass2_text}
 
@@ -501,14 +513,52 @@ Return JSON with this exact structure:
 If no issues found, return empty issues array but still return the text (even if unchanged).
 """
 
-pass3_response, pass3_error = invoke_llm(pass3_prompt)
+    pass3_response, pass3_error = invoke_llm(pass3_prompt)
 
-if pass3_error:
+    if pass3_error:
+        output = {
+            "status": "FAILED",
+            "error": f"Pass 3 (Tone) failed: {pass3_error}",
+            "mode": mode,
+            "original_draft": draft_reply,
+            "pass1_clarity": {
+                "issues": pass1_issues,
+                "summary": pass1_summary,
+                "text": pass1_text,
+            },
+            "pass2_grammar": {
+                "issues": pass2_issues,
+                "summary": pass2_summary,
+                "text": pass2_text,
+            },
+        }
+        print(f"[{datetime.utcnow().isoformat()}] Pass 3 error: {pass3_error}")
+    else:
+        pass3_result = extract_json_from_text(pass3_response)
+        pass3_issues = pass3_result.get("issues", [])
+        pass3_summary = pass3_result.get("summary", "No changes")
+        pass3_text = pass3_result.get("improved_text", pass2_text)
+        recipient_perception = pass3_result.get("recipient_perception", "Positive and professional")
+
+        if not pass3_text:
+            pass3_text = pass2_text
+
+        print(f"[{datetime.utcnow().isoformat()}] Pass 3 complete: {len(pass3_issues)} issues, {len(pass3_text)} chars")
+
+# ============================================================================
+# Build Final Output
+# ============================================================================
+
+if output is None:
+    final_text = pass3_text
+
     output = {
-        "status": "FAILED",
-        "error": f"Pass 3 (Tone) failed: {pass3_error}",
+        "status": "DONE",
         "mode": mode,
         "original_draft": draft_reply,
+        "final_reply": final_text,
+        "detected_tone": detected_tone,
+        "target_tone": target_tone,
         "pass1_clarity": {
             "issues": pass1_issues,
             "summary": pass1_summary,
@@ -519,64 +569,26 @@ if pass3_error:
             "summary": pass2_summary,
             "text": pass2_text,
         },
-    }
-    print(f"[{datetime.utcnow().isoformat()}] Pass 3 error: {pass3_error}")
-    output
-
-pass3_result = extract_json_from_text(pass3_response)
-pass3_issues = pass3_result.get("issues", [])
-pass3_summary = pass3_result.get("summary", "No changes")
-pass3_text = pass3_result.get("improved_text", pass2_text)
-recipient_perception = pass3_result.get("recipient_perception", "Positive and professional")
-
-if not pass3_text:
-    pass3_text = pass2_text
-
-print(f"[{datetime.utcnow().isoformat()}] Pass 3 complete: {len(pass3_issues)} issues, {len(pass3_text)} chars")
-
-# ============================================================================
-# Build Final Output
-# ============================================================================
-
-final_text = pass3_text
-
-output = {
-    "status": "DONE",
-    "mode": mode,
-    "original_draft": draft_reply,
-    "final_reply": final_text,
-    "detected_tone": detected_tone,
-    "target_tone": target_tone,
-    "pass1_clarity": {
-        "issues": pass1_issues,
-        "summary": pass1_summary,
-        "text": pass1_text,
-    },
-    "pass2_grammar": {
-        "issues": pass2_issues,
-        "summary": pass2_summary,
-        "text": pass2_text,
-    },
-    "pass3_tone": {
-        "issues": pass3_issues,
-        "summary": pass3_summary,
-        "text": pass3_text,
-        "recipient_perception": recipient_perception,
-    },
-}
-
-if mode == "generate":
-    output["incoming_email"] = {
-        "subject": incoming_subject,
-        "sender": incoming_sender,
-        "body_preview": incoming_body[:200] + "..." if len(incoming_body) > 200 else incoming_body,
+        "pass3_tone": {
+            "issues": pass3_issues,
+            "summary": pass3_summary,
+            "text": pass3_text,
+            "recipient_perception": recipient_perception,
+        },
     }
 
-print(f"[{datetime.utcnow().isoformat()}] Three-pass review complete!")
-print(f"Original: {len(draft_reply)} chars")
-print(f"Final: {len(final_text)} chars")
-print(f"Pass 1 issues: {len(pass1_issues)}")
-print(f"Pass 2 issues: {len(pass2_issues)}")
-print(f"Pass 3 issues: {len(pass3_issues)}")
+    if mode == "generate":
+        output["incoming_email"] = {
+            "subject": incoming_subject,
+            "sender": incoming_sender,
+            "body_preview": incoming_body[:200] + "..." if len(incoming_body) > 200 else incoming_body,
+        }
+
+    print(f"[{datetime.utcnow().isoformat()}] Three-pass review complete!")
+    print(f"Original: {len(draft_reply)} chars")
+    print(f"Final: {len(final_text)} chars")
+    print(f"Pass 1 issues: {len(pass1_issues)}")
+    print(f"Pass 2 issues: {len(pass2_issues)}")
+    print(f"Pass 3 issues: {len(pass3_issues)}")
 
 output

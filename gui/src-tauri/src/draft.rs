@@ -8,6 +8,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 // =============================================================================
 // Types
@@ -66,15 +67,14 @@ pub struct DraftSummary {
 // Pure Functions
 // =============================================================================
 
+static RE_NONWORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^\w\s-]").unwrap());
+static RE_SEP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\s_-]+").unwrap());
+
 pub fn slugify(title: &str) -> String {
     let text = title.to_lowercase();
     let text = text.trim();
-    // Remove non-word chars (keep alphanumeric, whitespace, hyphens)
-    let re_nonword = Regex::new(r"[^\w\s-]").unwrap();
-    let text = re_nonword.replace_all(text, "");
-    // Collapse whitespace/underscores/hyphens into single hyphens
-    let re_sep = Regex::new(r"[\s_-]+").unwrap();
-    let text = re_sep.replace_all(&text, "-");
+    let text = RE_NONWORD.replace_all(text, "");
+    let text = RE_SEP.replace_all(&text, "-");
     let text = text.trim_matches('-');
     let text = if text.len() > 80 { &text[..80] } else { text };
     if text.is_empty() {
