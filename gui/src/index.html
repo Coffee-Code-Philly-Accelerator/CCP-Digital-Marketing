@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCP Telemetry Cache Viewer</title>
+    <title>CCP Digital Marketing</title>
     <style>
         * {
             margin: 0;
@@ -15,45 +15,123 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             background: #1e1e1e;
             color: #d4d4d4;
+            padding: 0;
+        }
+
+        /* ======== Navigation ======== */
+        .app-header {
+            background: #252526;
+            border-bottom: 1px solid #3e3e3e;
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+            gap: 0;
+        }
+
+        .app-title {
+            color: #4ec9b0;
+            font-size: 16px;
+            font-weight: 600;
+            padding: 12px 20px 12px 0;
+            border-right: 1px solid #3e3e3e;
+            margin-right: 0;
+            white-space: nowrap;
+        }
+
+        .tab-nav {
+            display: flex;
+            gap: 0;
+        }
+
+        .tab-btn {
+            padding: 12px 20px;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: #858585;
+            cursor: pointer;
+            font-size: 14px;
+            transition: color 0.2s, border-color 0.2s;
+        }
+
+        .tab-btn:hover {
+            color: #d4d4d4;
+        }
+
+        .tab-btn.active {
+            color: #4ec9b0;
+            border-bottom-color: #4ec9b0;
+        }
+
+        .tab-section {
+            display: none;
             padding: 20px;
         }
 
-        h1 {
+        /* ======== Shared Styles ======== */
+        h1, h2, h3 {
             color: #4ec9b0;
-            margin-bottom: 20px;
         }
+
+        h2 { margin-bottom: 15px; }
 
         .controls {
             display: flex;
             gap: 10px;
             margin-bottom: 20px;
+            flex-wrap: wrap;
         }
 
-        .controls select, .controls input, .controls button {
+        .controls select, .controls input, .controls button,
+        select, input[type="text"], textarea {
             padding: 8px 12px;
             background: #2d2d2d;
             border: 1px solid #3e3e3e;
             color: #d4d4d4;
             border-radius: 4px;
+            font-size: 14px;
         }
 
-        .controls button {
+        textarea {
+            width: 100%;
+            min-height: 80px;
+            resize: vertical;
+            font-family: inherit;
+        }
+
+        .btn-primary {
             background: #0e639c;
+            border: 1px solid #0e639c;
+            color: #ffffff;
+            padding: 8px 16px;
+            border-radius: 4px;
             cursor: pointer;
+            font-size: 14px;
         }
 
-        .controls button:hover {
-            background: #1177bb;
+        .btn-primary:hover { background: #1177bb; }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-secondary {
+            background: #3e3e3e;
+            border: 1px solid #3e3e3e;
+            color: #d4d4d4;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
         }
 
-        #workflows-table {
+        .btn-secondary:hover { background: #505050; }
+
+        /* ======== Tables ======== */
+        table {
             width: 100%;
             border-collapse: collapse;
             background: #252526;
-            margin-bottom: 20px;
         }
 
-        #workflows-table th {
+        th {
             background: #2d2d2d;
             padding: 12px;
             text-align: left;
@@ -61,21 +139,37 @@
             color: #4ec9b0;
         }
 
-        #workflows-table td {
+        td {
             padding: 12px;
             border-bottom: 1px solid #3e3e3e;
         }
 
-        #workflows-table tr:hover {
-            background: #2d2d2d;
-            cursor: pointer;
-        }
+        tr:hover { background: #2d2d2d; }
 
+        /* ======== Status Colors ======== */
         .status-running { color: #dcdcaa; }
-        .status-completed { color: #4ec9b0; }
+        .status-completed, .status-published { color: #4ec9b0; }
         .status-failed { color: #f48771; }
         .status-partial { color: #ce9178; }
+        .status-draft { color: #858585; }
+        .status-approved { color: #569cd6; }
+        .status-skipped { color: #858585; }
 
+        .draft-status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .draft-status-badge.status-draft { background: #3e3e3e; }
+        .draft-status-badge.status-approved { background: #264f78; }
+        .draft-status-badge.status-published { background: #1b4332; }
+        .draft-status-badge.status-failed { background: #442222; }
+
+        /* ======== Timeline ======== */
         #timeline-container {
             display: none;
             background: #252526;
@@ -84,10 +178,7 @@
             margin-bottom: 20px;
         }
 
-        #timeline-container h2 {
-            color: #4ec9b0;
-            margin-bottom: 15px;
-        }
+        #timeline-container h2 { margin-bottom: 15px; }
 
         .tool-call {
             padding: 10px;
@@ -113,18 +204,7 @@
             color: #858585;
         }
 
-        #search-section {
-            margin: 20px 0;
-            padding: 20px;
-            background: #252526;
-            border-radius: 4px;
-        }
-
-        #search-section h2 {
-            color: #4ec9b0;
-            margin-bottom: 15px;
-        }
-
+        /* ======== Search ======== */
         .search-input-group {
             display: flex;
             gap: 10px;
@@ -132,15 +212,220 @@
 
         .search-input-group input {
             flex: 1;
-            padding: 10px;
-            background: #2d2d2d;
-            border: 1px solid #3e3e3e;
+        }
+
+        /* ======== Forms ======== */
+        .form-section {
+            background: #252526;
+            padding: 20px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .form-group.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .form-group label {
+            color: #858585;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-group label .required {
+            color: #f48771;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .platform-checkboxes {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .platform-checkboxes label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
             color: #d4d4d4;
+            font-size: 14px;
+            text-transform: none;
+            letter-spacing: 0;
+            cursor: pointer;
+        }
+
+        /* ======== Progress Panel ======== */
+        .progress-panel {
+            background: #252526;
+            border: 1px solid #3e3e3e;
+            border-radius: 4px;
+            padding: 12px;
+            margin: 12px 0;
+        }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .progress-title {
+            color: #4ec9b0;
+            font-weight: 600;
+        }
+
+        .progress-elapsed {
+            color: #858585;
+            font-size: 13px;
+        }
+
+        .progress-phases {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .progress-phase {
+            padding: 4px 10px;
+            border-radius: 3px;
+            font-size: 13px;
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .phase-name { font-weight: 600; }
+
+        .phase-pending { background: #3e3e3e; }
+        .phase-running { background: #264f78; }
+        .phase-completed { background: #1b4332; }
+        .phase-failed { background: #442222; }
+        .phase-skipped { background: #3e3e3e; color: #858585; }
+
+        .progress-result {
+            margin-top: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .progress-result pre {
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        /* ======== Results ======== */
+        .result-json {
+            background: #1e1e1e;
+            border: 1px solid #3e3e3e;
+            border-radius: 4px;
+            padding: 12px;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        /* ======== Draft Detail ======== */
+        #draft-detail {
+            display: none;
+            background: #252526;
+            padding: 20px;
+            border-radius: 4px;
+            margin-top: 20px;
+        }
+
+        .draft-detail-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .draft-detail-header h3 { flex: 1; }
+
+        .draft-meta {
+            margin-bottom: 16px;
+            padding: 12px;
+            background: #2d2d2d;
             border-radius: 4px;
         }
 
-        #search-results {
-            margin-top: 15px;
+        .draft-meta p {
+            margin: 4px 0;
+            font-size: 14px;
+        }
+
+        .draft-copies {
+            margin-bottom: 16px;
+        }
+
+        .draft-copies h4 {
+            color: #4ec9b0;
+            margin-bottom: 10px;
+        }
+
+        .copy-field {
+            margin-bottom: 10px;
+        }
+
+        .copy-field label {
+            display: block;
+            color: #569cd6;
+            font-size: 12px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .copy-text {
+            background: #2d2d2d;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            white-space: pre-wrap;
+            line-height: 1.4;
+        }
+
+        .draft-actions {
+            margin-bottom: 12px;
+        }
+
+        .draft-publish-results {
+            margin-top: 16px;
+        }
+
+        .draft-publish-results h4 {
+            color: #4ec9b0;
+            margin-bottom: 8px;
+        }
+
+        .draft-publish-results pre {
+            background: #1e1e1e;
+            border: 1px solid #3e3e3e;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: pre-wrap;
         }
 
         .loading {
@@ -151,64 +436,310 @@
     </style>
 </head>
 <body>
-    <h1>CCP Telemetry Cache Viewer</h1>
+    <!-- Navigation -->
+    <header class="app-header">
+        <span class="app-title">CCP Digital Marketing</span>
+        <nav class="tab-nav">
+            <button class="tab-btn active" data-tab="telemetry">Telemetry</button>
+            <button class="tab-btn" data-tab="create-event">Create Event</button>
+            <button class="tab-btn" data-tab="social-post">Social Post</button>
+            <button class="tab-btn" data-tab="drafts">Drafts</button>
+        </nav>
+    </header>
 
-    <div class="controls">
-        <select id="filter-type">
-            <option value="">All Workflow Types</option>
-            <option value="full-workflow">full-workflow</option>
-            <option value="create-event">create-event</option>
-            <option value="promote">promote</option>
-            <option value="social-post">social-post</option>
-        </select>
+    <!-- ======== Telemetry Tab ======== -->
+    <section id="tab-telemetry" class="tab-section">
+        <h2>Workflow Telemetry</h2>
 
-        <select id="filter-status">
-            <option value="">All Statuses</option>
-            <option value="running">running</option>
-            <option value="completed">completed</option>
-            <option value="failed">failed</option>
-            <option value="partial">partial</option>
-        </select>
+        <div class="controls">
+            <select id="filter-type">
+                <option value="">All Workflow Types</option>
+                <option value="full-workflow">full-workflow</option>
+                <option value="create-event">create-event</option>
+                <option value="promote">promote</option>
+                <option value="social-post">social-post</option>
+            </select>
 
-        <button onclick="loadWorkflows()">Refresh</button>
-        <button onclick="cleanupExpired()">Cleanup (7 days)</button>
-    </div>
+            <select id="filter-status">
+                <option value="">All Statuses</option>
+                <option value="running">running</option>
+                <option value="completed">completed</option>
+                <option value="failed">failed</option>
+                <option value="partial">partial</option>
+            </select>
 
-    <table id="workflows-table">
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>User</th>
-            </tr>
-        </thead>
-        <tbody id="workflows-body">
-            <tr><td colspan="5" class="loading">Loading workflows...</td></tr>
-        </tbody>
-    </table>
-
-    <div id="timeline-container">
-        <button onclick="closeTimeline()">Close Timeline</button>
-        <h2 id="timeline-title">Workflow Timeline</h2>
-        <div id="timeline-content"></div>
-    </div>
-
-    <div id="search-section">
-        <h2>Search Correlation</h2>
-        <p style="margin-bottom: 10px; color: #858585;">
-            Find workflows that reference a specific artifact (e.g., image_url, event_url)
-        </p>
-        <div class="search-input-group">
-            <input type="text" id="search-artifact" placeholder="Enter artifact to search (e.g., https://storage.googleapis.com/...)">
-            <button onclick="searchCorrelation()">Search</button>
+            <button class="btn-primary" onclick="loadWorkflows()">Refresh</button>
+            <button class="btn-secondary" onclick="cleanupExpired()">Cleanup (7 days)</button>
         </div>
-        <div id="search-results"></div>
-    </div>
 
+        <table id="workflows-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>User</th>
+                </tr>
+            </thead>
+            <tbody id="workflows-body">
+                <tr><td colspan="5" class="loading">Loading workflows...</td></tr>
+            </tbody>
+        </table>
+
+        <div id="timeline-container">
+            <button class="btn-secondary" onclick="closeTimeline()">Close Timeline</button>
+            <h2 id="timeline-title">Workflow Timeline</h2>
+            <div id="timeline-content"></div>
+        </div>
+
+        <div class="form-section">
+            <h2>Search Correlation</h2>
+            <p style="margin-bottom: 10px; color: #858585;">
+                Find workflows that reference a specific artifact (e.g., image_url, event_url)
+            </p>
+            <div class="search-input-group">
+                <input type="text" id="search-artifact" placeholder="Enter artifact to search (e.g., https://storage.googleapis.com/...)">
+                <button class="btn-primary" onclick="searchCorrelation()">Search</button>
+            </div>
+            <div id="search-results"></div>
+        </div>
+    </section>
+
+    <!-- ======== Create Event Tab ======== -->
+    <section id="tab-create-event" class="tab-section">
+        <h2>Create Event</h2>
+
+        <div class="form-section">
+            <h3 style="margin-bottom: 12px;">Event Details</h3>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Title <span class="required">*</span></label>
+                    <input type="text" id="ev-title" placeholder="e.g., AI Workshop">
+                </div>
+                <div class="form-group">
+                    <label>Date <span class="required">*</span></label>
+                    <input type="text" id="ev-date" placeholder="e.g., January 25, 2025">
+                </div>
+                <div class="form-group">
+                    <label>Time <span class="required">*</span></label>
+                    <input type="text" id="ev-time" placeholder="e.g., 6:00 PM EST">
+                </div>
+                <div class="form-group">
+                    <label>Location <span class="required">*</span></label>
+                    <input type="text" id="ev-location" placeholder="e.g., The Station, Philadelphia">
+                </div>
+                <div class="form-group full-width">
+                    <label>Description <span class="required">*</span></label>
+                    <textarea id="ev-description" placeholder="Event description..."></textarea>
+                </div>
+            </div>
+
+            <h3 style="margin-bottom: 12px;">Options</h3>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Meetup Group URL</label>
+                    <input type="text" id="ev-meetup-url" placeholder="https://www.meetup.com/code-coffee-philly">
+                </div>
+                <div class="form-group">
+                    <label>Browser Provider</label>
+                    <select id="ev-provider">
+                        <option value="hyperbrowser">Hyperbrowser (default)</option>
+                        <option value="browser_tool">Composio browser_tool</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Discord Channel ID</label>
+                    <input type="text" id="ev-discord-channel" placeholder="For full workflow promotion">
+                </div>
+                <div class="form-group">
+                    <label>Facebook Page ID</label>
+                    <input type="text" id="ev-facebook-page" placeholder="For full workflow promotion">
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label>Platforms</label>
+                <div class="platform-checkboxes">
+                    <label><input type="checkbox" id="ev-plat-luma" checked> Luma</label>
+                    <label><input type="checkbox" id="ev-plat-meetup" checked> Meetup</label>
+                    <label><input type="checkbox" id="ev-plat-partiful" checked> Partiful</label>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn-primary" onclick="submitEventForm('create')">Create Event</button>
+                <button type="button" class="btn-primary" onclick="submitEventForm('full')">Full Workflow (Create + Promote)</button>
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h3 style="margin-bottom: 12px;">Promote Existing Event</h3>
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label>Event URL <span class="required">*</span></label>
+                <input type="text" id="promote-event-url" placeholder="https://lu.ma/abc123" style="width: 100%;">
+            </div>
+            <button type="button" class="btn-primary" onclick="submitPromoteForm()">Promote on Social Media</button>
+            <div id="promote-result" style="margin-top: 12px;"></div>
+        </div>
+
+        <div id="event-progress" class="progress-panel" style="display:none;"></div>
+        <div id="event-result" style="margin-top: 12px;"></div>
+    </section>
+
+    <!-- ======== Social Post Tab ======== -->
+    <section id="tab-social-post" class="tab-section">
+        <h2>Generic Social Post</h2>
+
+        <div class="form-section">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Topic <span class="required">*</span></label>
+                    <input type="text" id="sp-topic" placeholder="e.g., New Partnership">
+                </div>
+                <div class="form-group">
+                    <label>URL</label>
+                    <input type="text" id="sp-url" placeholder="https://example.com">
+                </div>
+                <div class="form-group full-width">
+                    <label>Content <span class="required">*</span></label>
+                    <textarea id="sp-content" placeholder="Main message/body text..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Image URL (reuse existing)</label>
+                    <input type="text" id="sp-image-url" placeholder="https://...">
+                </div>
+                <div class="form-group">
+                    <label>Image Prompt (Gemini)</label>
+                    <input type="text" id="sp-image-prompt" placeholder="Custom image generation prompt">
+                </div>
+                <div class="form-group">
+                    <label>Tone</label>
+                    <select id="sp-tone">
+                        <option value="">Default</option>
+                        <option value="engaging">Engaging</option>
+                        <option value="professional">Professional</option>
+                        <option value="casual">Casual</option>
+                        <option value="excited">Excited</option>
+                        <option value="informative">Informative</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>CTA</label>
+                    <input type="text" id="sp-cta" placeholder="Call-to-action text">
+                </div>
+                <div class="form-group">
+                    <label>Hashtags</label>
+                    <input type="text" id="sp-hashtags" placeholder="#tech #philly">
+                </div>
+                <div class="form-group">
+                    <label>Discord Channel ID</label>
+                    <input type="text" id="sp-discord-channel">
+                </div>
+                <div class="form-group">
+                    <label>Facebook Page ID</label>
+                    <input type="text" id="sp-facebook-page">
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label>Platforms</label>
+                <div class="platform-checkboxes">
+                    <label><input type="checkbox" id="sp-plat-twitter" checked> Twitter</label>
+                    <label><input type="checkbox" id="sp-plat-linkedin" checked> LinkedIn</label>
+                    <label><input type="checkbox" id="sp-plat-instagram" checked> Instagram</label>
+                    <label><input type="checkbox" id="sp-plat-facebook" checked> Facebook</label>
+                    <label><input type="checkbox" id="sp-plat-discord" checked> Discord</label>
+                </div>
+            </div>
+
+            <button type="button" id="social-submit-btn" class="btn-primary" onclick="submitSocialPost()">Post to Social Media</button>
+        </div>
+
+        <div id="social-progress" class="progress-panel" style="display:none;"></div>
+        <div id="social-result" style="margin-top: 12px;"></div>
+    </section>
+
+    <!-- ======== Drafts Tab ======== -->
+    <section id="tab-drafts" class="tab-section">
+        <h2>Draft Management</h2>
+
+        <!-- Generate Drafts Form -->
+        <div class="form-section">
+            <h3 style="margin-bottom: 12px;">Generate New Drafts</h3>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Title <span class="required">*</span></label>
+                    <input type="text" id="gd-title" placeholder="Event title">
+                </div>
+                <div class="form-group">
+                    <label>Date <span class="required">*</span></label>
+                    <input type="text" id="gd-date" placeholder="e.g., March 20, 2026">
+                </div>
+                <div class="form-group">
+                    <label>Time <span class="required">*</span></label>
+                    <input type="text" id="gd-time" placeholder="e.g., 6:00 PM EST">
+                </div>
+                <div class="form-group">
+                    <label>Location <span class="required">*</span></label>
+                    <input type="text" id="gd-location" placeholder="Venue">
+                </div>
+                <div class="form-group full-width">
+                    <label>Description <span class="required">*</span></label>
+                    <textarea id="gd-description" placeholder="Event description..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Event URL <span class="required">*</span></label>
+                    <input type="text" id="gd-event-url" placeholder="https://lu.ma/...">
+                </div>
+                <div class="form-group">
+                    <label>Discord Channel ID</label>
+                    <input type="text" id="gd-discord-channel">
+                </div>
+                <div class="form-group">
+                    <label>Facebook Page ID</label>
+                    <input type="text" id="gd-facebook-page">
+                </div>
+            </div>
+            <button type="button" id="gen-draft-btn" class="btn-primary" onclick="submitGenerateDrafts()">Generate Drafts</button>
+            <div id="gen-draft-progress" class="progress-panel" style="display:none;"></div>
+            <div id="gen-draft-result" style="margin-top: 12px;"></div>
+        </div>
+
+        <!-- Drafts List -->
+        <div class="form-section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h3>Saved Drafts</h3>
+                <button class="btn-secondary" onclick="loadDraftsList()">Refresh</button>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Title</th>
+                        <th>Date</th>
+                        <th>Created</th>
+                        <th>Filename</th>
+                    </tr>
+                </thead>
+                <tbody id="drafts-body">
+                    <tr><td colspan="5" class="loading">Click "Refresh" to load drafts</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Draft Detail -->
+        <div id="draft-detail"></div>
+    </section>
+
+    <!-- Scripts: shared utilities first, then feature modules -->
+    <script src="app.js"></script>
+    <script src="progress.js"></script>
     <script src="timeline.js"></script>
     <script src="search.js"></script>
+    <script src="event-form.js"></script>
+    <script src="social-post-form.js"></script>
+    <script src="drafts-view.js"></script>
 
     <script>
         const { invoke } = window.__TAURI__.core;
@@ -236,18 +767,13 @@
                         <td>${wf.id}</td>
                         <td>${escapeHtml(wf.workflow_type)}</td>
                         <td class="status-${escapeHtml(wf.status)}">${escapeHtml(wf.status)}</td>
-                        <td>${formatTimestamp(wf.created_at)}</td>
+                        <td>${formatTimestampShared(wf.created_at)}</td>
                         <td>${escapeHtml(wf.user_id)}</td>
                     </tr>
                 `).join('');
             } catch (error) {
                 tbody.innerHTML = `<tr><td colspan="5" style="color: #f48771;">Error: ${escapeHtml(String(error))}</td></tr>`;
             }
-        }
-
-        function formatTimestamp(timestamp) {
-            const date = new Date(timestamp * 1000);
-            return date.toLocaleString();
         }
 
         async function cleanupExpired() {

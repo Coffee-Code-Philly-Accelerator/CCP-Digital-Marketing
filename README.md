@@ -4,7 +4,7 @@
 [![Composio](https://img.shields.io/badge/Built%20with-Composio-green)](https://composio.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Automated event creation and social media promotion system for Coffee Code Philly Accelerator. Creates events across multiple platforms and promotes them on social media with AI-generated content. Also supports generic social media posts (community updates, tech news, sponsor shout-outs) that aren't tied to a specific event.
+Automated event creation and social media promotion system for Coffee Code Philly Accelerator. Creates events across multiple platforms and promotes them on social media with AI-generated content. Also supports generic social media posts (community updates, tech news, sponsor shout-outs) that aren't tied to a specific event. Available via CLI, Claude Code skills, Rube App, or a native Tauri desktop GUI with real-time progress tracking and draft management.
 
 ## Overview
 
@@ -183,6 +183,24 @@ python scripts/recipe_client.py social-post \
 # Get recipe info
 python scripts/recipe_client.py info --recipe all
 ```
+
+### Option 4: Via Tauri Desktop App
+
+A native desktop GUI with form-based inputs, real-time progress tracking, and draft management.
+
+```bash
+# Prerequisites: Rust toolchain (rustup.rs)
+export COMPOSIO_API_KEY='your-key'
+
+# Build and run
+cd gui/src-tauri && cargo run
+```
+
+**Tabs:**
+- **Telemetry** — Browse workflow history, tool call timelines, artifact search
+- **Create Event** — Form-based event creation on Luma/Meetup/Partiful with live progress
+- **Social Post** — Generic social media posting with tone/CTA/hashtag controls
+- **Drafts** — Generate AI drafts, review, approve, and publish with full lifecycle management
 
 ## Recipes
 
@@ -646,6 +664,8 @@ If a recipe returns `NEEDS_AUTH`, re-run auth-setup with the existing `profile_i
 | `CCP_HYPERBROWSER_LLM` | No | `claude-sonnet-4-20250514` | LLM for Hyperbrowser browser agent |
 | `CCP_HYPERBROWSER_MAX_STEPS` | No | `25` | Max agent steps per browser task |
 | `CCP_HYPERBROWSER_USE_STEALTH` | No | `true` | Stealth mode for anti-bot evasion |
+| `CCP_CACHE_DB_PATH` | No | `~/.claude/cache/state.db` | SQLite database for telemetry cache (GUI) |
+| `CCP_DRAFTS_DIR` | No | `<project_root>/drafts` | Override drafts directory path (GUI) |
 
 See `scripts/.env.example` for the full list including optional overrides.
 
@@ -679,8 +699,32 @@ CCP-Digital-Marketing/
 │   └── auth_setup.py            # Hyperbrowser auth profile setup
 ├── scripts/
 │   ├── recipe_client.py         # CLI client for recipe execution
+│   ├── draft_store.py           # Draft storage module (pure functions + file I/O)
 │   ├── requirements.txt         # Python dependencies
 │   └── .env.example             # Environment variable template
+├── gui/
+│   ├── src/                     # Frontend (vanilla JS)
+│   │   ├── index.html           # Main UI with tab navigation
+│   │   ├── app.js               # Tab router + shared utilities
+│   │   ├── progress.js          # Real-time recipe progress panel
+│   │   ├── event-form.js        # Create Event / Full Workflow forms
+│   │   ├── social-post-form.js  # Generic social post form
+│   │   ├── drafts-view.js       # Draft list, detail, approve/publish
+│   │   ├── timeline.js          # Workflow timeline visualization
+│   │   └── search.js            # Artifact correlation search
+│   └── src-tauri/               # Rust backend (Tauri v2)
+│       ├── Cargo.toml
+│       ├── src/
+│       │   ├── main.rs          # App entry, state management, command registration
+│       │   ├── config.rs        # AppConfig, recipe IDs, platform constants
+│       │   ├── composio.rs      # HTTP client for Composio API
+│       │   ├── progress.rs      # RecipeProgressEvent + Tauri event emission
+│       │   ├── recipe_commands.rs # 5 IPC commands (create, promote, social, workflow, info)
+│       │   ├── draft.rs         # Draft types + pure functions + file I/O
+│       │   ├── draft_commands.rs # 5 IPC commands (generate, list, load, approve, publish)
+│       │   └── db.rs            # Telemetry SQLite queries
+│       └── tauri.conf.json
+├── drafts/                      # Draft JSON files (gitignored, shared by CLI + GUI)
 ├── .claude/skills/
 │   ├── auth-setup/              # Hyperbrowser persistent auth profile setup
 │   ├── luma-create/             # Luma event creation skill

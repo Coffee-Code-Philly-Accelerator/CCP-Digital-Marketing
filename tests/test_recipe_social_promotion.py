@@ -180,6 +180,125 @@ class TestSocialPromotionPlatformFailures:
         assert "skipped" in output["discord_posted"]
 
 
+class TestGenerateOnlyMode:
+    def test_returns_copies_without_posting(self, monkeypatch, base_env):
+        base_env["mode"] = "generate_only"
+        tool_calls = []
+
+        def tool_fn(tool_name, arguments):
+            tool_calls.append(tool_name)
+            if tool_name == "GEMINI_GENERATE_IMAGE":
+                return ({"data": {"publicUrl": "https://img.example.com/generated.jpg"}}, None)
+            return ({"data": {}}, None)
+
+        output = _run_recipe(monkeypatch, base_env, tool_fn=tool_fn)
+        assert output["status"] == "DRAFT_GENERATED"
+        assert "copies" in output
+        assert output["copies"]["twitter"] == "Join us! #AI"
+        assert output["image_url"] == "https://img.example.com/generated.jpg"
+
+    def test_no_platform_api_calls(self, monkeypatch, base_env):
+        base_env["mode"] = "generate_only"
+        tool_calls = []
+
+        def tool_fn(tool_name, arguments):
+            tool_calls.append(tool_name)
+            if tool_name == "GEMINI_GENERATE_IMAGE":
+                return ({"data": {"publicUrl": "https://img.example.com/photo.jpg"}}, None)
+            return ({"data": {}}, None)
+
+        _run_recipe(monkeypatch, base_env, tool_fn=tool_fn)
+
+        posting_tools = [
+            "LINKEDIN_GET_MY_INFO",
+            "LINKEDIN_CREATE_LINKED_IN_POST",
+            "INSTAGRAM_GET_USER_INFO",
+            "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+            "FACEBOOK_CREATE_POST",
+            "DISCORDBOT_CREATE_MESSAGE",
+        ]
+        for tool in posting_tools:
+            assert tool not in tool_calls, f"{tool} should not be called in generate_only mode"
+
+
+class TestPublishOnlyMode:
+    def test_uses_pre_generated_copies(self, monkeypatch, base_env):
+        copies = {
+            "twitter": "Custom tweet",
+            "linkedin": "Custom LI post",
+            "instagram": "Custom IG caption",
+            "facebook": "Custom FB post",
+            "discord": "Custom DC msg",
+        }
+        base_env["mode"] = "publish_only"
+        base_env["pre_generated_copies"] = json.dumps(copies)
+        base_env["image_url"] = "https://img.example.com/existing.jpg"
+
+        output = _run_recipe(monkeypatch, base_env)
+        assert output["linkedin_posted"] == "success"
+        assert output["image_url"] == "https://img.example.com/existing.jpg"
+
+    def test_skips_llm_and_gemini(self, monkeypatch, base_env):
+        copies = {
+            "twitter": "t",
+            "linkedin": "l",
+            "instagram": "i",
+            "facebook": "f",
+            "discord": "d",
+        }
+        base_env["mode"] = "publish_only"
+        base_env["pre_generated_copies"] = json.dumps(copies)
+        base_env["image_url"] = "https://img.example.com/existing.jpg"
+        tool_calls = []
+        llm_calls = []
+
+        def tool_fn(tool_name, arguments):
+            tool_calls.append(tool_name)
+            if tool_name == "LINKEDIN_GET_MY_INFO":
+                return ({"data": {"data": {"id": "li_123"}}}, None)
+            if tool_name == "LINKEDIN_CREATE_LINKED_IN_POST":
+                return ({"data": {}}, None)
+            if tool_name == "INSTAGRAM_GET_USER_INFO":
+                return ({"data": {"data": {"id": "ig_456"}}}, None)
+            if tool_name == "INSTAGRAM_CREATE_MEDIA_CONTAINER":
+                return ({"data": {"data": {"id": "c_789"}}}, None)
+            if tool_name == "INSTAGRAM_GET_POST_STATUS":
+                return ({"data": {"data": {"status_code": "FINISHED"}}}, None)
+            if tool_name == "INSTAGRAM_CREATE_POST":
+                return ({"data": {}}, None)
+            if tool_name == "FACEBOOK_CREATE_POST":
+                return ({"data": {}}, None)
+            if tool_name == "DISCORDBOT_CREATE_MESSAGE":
+                return ({"data": {}}, None)
+            return ({"data": {}}, None)
+
+        def llm_fn(prompt):
+            llm_calls.append(prompt)
+            return (json.dumps(copies), None)
+
+        _run_recipe(monkeypatch, base_env, tool_fn=tool_fn, llm_fn=llm_fn)
+        assert "GEMINI_GENERATE_IMAGE" not in tool_calls
+        assert len(llm_calls) == 0
+
+    def test_rejects_invalid_pre_generated_copies(self, monkeypatch, base_env):
+        base_env["mode"] = "publish_only"
+        base_env["pre_generated_copies"] = json.dumps({"twitter": "only one key"})
+        with pytest.raises(ValueError, match="pre_generated_copies must contain all 5 platform keys"):
+            _run_recipe(monkeypatch, base_env)
+
+
+class TestBackwardsCompatibility:
+    def test_no_mode_env_unchanged_behavior(self, monkeypatch, base_env):
+        """No mode env var -> existing behavior unchanged (posts to all platforms)."""
+        output = _run_recipe(monkeypatch, base_env)
+        assert output["linkedin_posted"] == "success"
+        assert output["instagram_posted"] == "success"
+        assert output["facebook_posted"] == "success"
+        assert output["discord_posted"] == "success"
+        assert "4/5" in output["summary"]
+        assert "status" not in output  # no DRAFT_GENERATED status
+
+
 class TestSocialPromotionValidation:
     def test_missing_required_inputs(self, monkeypatch):
         monkeypatch.setattr(builtins, "run_composio_tool", lambda *a: ({"data": {}}, None), raising=False)

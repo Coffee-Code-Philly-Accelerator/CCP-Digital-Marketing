@@ -1,7 +1,8 @@
 //! Database query functions for Tauri commands
 
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePool, sqlite::SqliteRow, Row};
+use sqlx::sqlite::{SqlitePool, SqliteRow};
+use sqlx::Row;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkflowSummary {
