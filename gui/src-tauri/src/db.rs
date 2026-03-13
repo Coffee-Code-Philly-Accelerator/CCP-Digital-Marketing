@@ -30,22 +30,16 @@ pub async fn list_workflows(
     workflow_type: Option<String>,
     status: Option<String>,
 ) -> Result<Vec<WorkflowSummary>, String> {
-    let mut query = "SELECT id, user_id, workflow_type, status, created_at, updated_at FROM workflows WHERE 1=1".to_string();
-
-    if let Some(wf_type) = &workflow_type {
-        query.push_str(&format!(" AND workflow_type = '{}'", wf_type));
-    }
-
-    if let Some(st) = &status {
-        query.push_str(&format!(" AND status = '{}'", st));
-    }
-
-    query.push_str(" ORDER BY created_at DESC LIMIT 100");
-
-    let rows: Vec<SqliteRow> = sqlx::query(&query)
-        .fetch_all(pool.inner())
-        .await
-        .map_err(|e| format!("Database query failed: {}", e))?;
+    let rows: Vec<SqliteRow> = sqlx::query(
+        "SELECT id, user_id, workflow_type, status, created_at, updated_at FROM workflows WHERE (? IS NULL OR workflow_type = ?) AND (? IS NULL OR status = ?) ORDER BY created_at DESC LIMIT 100"
+    )
+    .bind(&workflow_type)
+    .bind(&workflow_type)
+    .bind(&status)
+    .bind(&status)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|e| format!("Database query failed: {}", e))?;
 
     let workflows = rows
         .iter()

@@ -753,7 +753,7 @@
 
             try {
                 const workflows = await invoke('list_workflows', {
-                    workflowType: workflowType || null,
+                    workflow_type: workflowType || null,
                     status: status || null
                 });
 
@@ -765,14 +765,14 @@
                 tbody.innerHTML = workflows.map(wf => `
                     <tr onclick="loadWorkflowTimeline(${wf.id})">
                         <td>${wf.id}</td>
-                        <td>${wf.workflow_type}</td>
-                        <td class="status-${wf.status}">${wf.status}</td>
+                        <td>${escapeHtml(wf.workflow_type)}</td>
+                        <td class="status-${escapeHtml(wf.status)}">${escapeHtml(wf.status)}</td>
                         <td>${formatTimestampShared(wf.created_at)}</td>
-                        <td>${wf.user_id}</td>
+                        <td>${escapeHtml(wf.user_id)}</td>
                     </tr>
                 `).join('');
             } catch (error) {
-                tbody.innerHTML = `<tr><td colspan="5" style="color: #f48771;">Error: ${error}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="5" style="color: #f48771;">Error: ${escapeHtml(String(error))}</td></tr>`;
             }
         }
 

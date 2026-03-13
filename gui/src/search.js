@@ -40,8 +40,8 @@ async function searchCorrelation() {
                 ${workflows.map(wf => `
                     <tr style="border-bottom: 1px solid #3e3e3e;">
                         <td style="padding: 8px;">${wf.id}</td>
-                        <td style="padding: 8px;">${wf.workflow_type}</td>
-                        <td style="padding: 8px;" class="status-${wf.status}">${wf.status}</td>
+                        <td style="padding: 8px;">${escapeHtml(wf.workflow_type)}</td>
+                        <td style="padding: 8px;" class="status-${escapeHtml(wf.status)}">${escapeHtml(wf.status)}</td>
                         <td style="padding: 8px;">${formatTimestamp(wf.created_at)}</td>
                         <td style="padding: 8px;">
                             <button onclick="loadWorkflowTimeline(${wf.id})" style="padding: 4px 8px; background: #0e639c; border: none; color: white; border-radius: 2px; cursor: pointer;">
@@ -60,7 +60,7 @@ async function searchCorrelation() {
         `;
         resultsDiv.appendChild(table);
     } catch (error) {
-        resultsDiv.innerHTML = `<p style="color: #f48771; margin-top: 10px;">Error: ${error}</p>`;
+        resultsDiv.innerHTML = `<p style="color: #f48771; margin-top: 10px;">Error: ${escapeHtml(String(error))}</p>`;
     }
 }
 
