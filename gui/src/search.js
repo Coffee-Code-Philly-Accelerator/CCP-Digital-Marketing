@@ -1,4 +1,5 @@
 // search.js - Correlation search functionality (vanilla JS)
+// Uses escapeHtml() and formatTimestampShared() from app.js
 
 async function searchCorrelation() {
     const { invoke } = window.__TAURI__.core;
@@ -42,7 +43,7 @@ async function searchCorrelation() {
                         <td style="padding: 8px;">${wf.id}</td>
                         <td style="padding: 8px;">${escapeHtml(wf.workflow_type)}</td>
                         <td style="padding: 8px;" class="status-${escapeHtml(wf.status)}">${escapeHtml(wf.status)}</td>
-                        <td style="padding: 8px;">${formatTimestamp(wf.created_at)}</td>
+                        <td style="padding: 8px;">${formatTimestampShared(wf.created_at)}</td>
                         <td style="padding: 8px;">
                             <button onclick="loadWorkflowTimeline(${wf.id})" style="padding: 4px 8px; background: #0e639c; border: none; color: white; border-radius: 2px; cursor: pointer;">
                                 View Timeline
@@ -62,17 +63,6 @@ async function searchCorrelation() {
     } catch (error) {
         resultsDiv.innerHTML = `<p style="color: #f48771; margin-top: 10px;">Error: ${escapeHtml(String(error))}</p>`;
     }
-}
-
-function formatTimestamp(timestamp) {
-    const date = new Date(timestamp * 1000);
-    return date.toLocaleString();
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 // Allow search on Enter key

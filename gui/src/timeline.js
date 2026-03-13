@@ -1,4 +1,5 @@
 // timeline.js - Gantt-style timeline visualization (vanilla JS)
+// Uses escapeHtml() and formatTimestampShared() from app.js
 
 async function loadWorkflowTimeline(workflowId) {
     const { invoke } = window.__TAURI__.core;
@@ -67,7 +68,7 @@ function renderTimeline(toolCalls) {
                 <span>${escapeHtml(tc.status.toUpperCase())} (${tc.latency_ms || '?'}ms)</span>
             </div>
             <div class="tool-call-details">
-                Time: +${timeLabel} | ID: ${tc.id} | Created: ${formatTimestamp(tc.created_at)}
+                Time: +${timeLabel} | ID: ${tc.id} | Created: ${formatTimestampShared(tc.created_at)}
             </div>
         `;
 
@@ -82,9 +83,4 @@ function formatDuration(seconds) {
     const minutes = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${minutes}m ${secs}s`;
-}
-
-function formatTimestamp(timestamp) {
-    const date = new Date(timestamp * 1000);
-    return date.toLocaleTimeString();
 }

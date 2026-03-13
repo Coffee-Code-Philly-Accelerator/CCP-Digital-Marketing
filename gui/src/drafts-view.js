@@ -12,7 +12,7 @@ async function loadDraftsList() {
             return;
         }
         tbody.innerHTML = drafts.map(d => `
-            <tr onclick="loadDraftDetail('${escapeHtml(d.filepath)}')" style="cursor:pointer;">
+            <tr data-filepath="${escapeHtml(d.filepath)}" style="cursor:pointer;">
                 <td><span class="draft-status-badge status-${d.status}">${escapeHtml(d.status)}</span></td>
                 <td>${escapeHtml(d.title)}</td>
                 <td>${escapeHtml(d.date)}</td>
@@ -20,6 +20,9 @@ async function loadDraftsList() {
                 <td>${escapeHtml(d.filename)}</td>
             </tr>
         `).join('');
+        tbody.querySelectorAll('tr[data-filepath]').forEach(row => {
+            row.addEventListener('click', () => loadDraftDetail(row.dataset.filepath));
+        });
     } catch (error) {
         tbody.innerHTML = `<tr><td colspan="5" style="color: #f48771;">Error: ${escapeHtml(String(error))}</td></tr>`;
     }
@@ -67,8 +70,8 @@ function renderDraftDetail(draft, filepath) {
         </div>
 
         <div class="draft-actions">
-            ${draft.status === 'draft' ? `<button onclick="approveDraft('${escapeHtml(filepath)}')" class="btn-primary">Approve</button>` : ''}
-            ${draft.status === 'approved' ? `<button onclick="publishDraft('${escapeHtml(filepath)}')" class="btn-primary">Publish</button>` : ''}
+            ${draft.status === 'draft' ? `<button data-action="approve" class="btn-primary">Approve</button>` : ''}
+            ${draft.status === 'approved' ? `<button data-action="publish" class="btn-primary">Publish</button>` : ''}
         </div>
 
         <div id="draft-action-progress" style="display:none;"></div>
@@ -81,6 +84,11 @@ function renderDraftDetail(draft, filepath) {
             </div>
         ` : ''}
     `;
+
+    const approveBtn = detailDiv.querySelector('[data-action="approve"]');
+    if (approveBtn) approveBtn.addEventListener('click', () => approveDraft(filepath));
+    const publishBtn = detailDiv.querySelector('[data-action="publish"]');
+    if (publishBtn) publishBtn.addEventListener('click', () => publishDraft(filepath));
 }
 
 function renderCopyField(label, text) {

@@ -136,19 +136,12 @@ class ComposioRecipeClient:
         print(f"[{self._timestamp()}] Executing recipe: {recipe_id}")
         print(f"[{self._timestamp()}] Input: {json.dumps(redact_sensitive_data(input_data), indent=2)}")
 
+        # LET-IT-CRASH-EXCEPTION: requests library forces exception-based error handling
         try:
             response = self.session.post(url, json={"input_data": input_data})
             response.raise_for_status()
-            result = response.json()
-
-            if wait_for_completion and result.get("execution_id"):
-                return self._poll_execution(result["execution_id"], timeout)
-
-            return result
-
         except requests.exceptions.HTTPError as e:
             status_code = e.response.status_code if e.response else "unknown"
-            # Truncate error details to avoid exposing sensitive API responses
             error_detail = (
                 (e.response.text[:500] + "...")
                 if e.response and len(e.response.text) > 500
@@ -157,12 +150,13 @@ class ComposioRecipeClient:
             print(f"[{self._timestamp()}] HTTP Error: {status_code}")
             print(f"[{self._timestamp()}] Details: {error_detail}")
             return {"error": f"HTTP {status_code}", "details": error_detail}
-        except requests.exceptions.RequestException as e:
-            print(f"[{self._timestamp()}] Request error: {type(e).__name__}: {e}")
-            return {"error": f"{type(e).__name__}: {e}"}
-        except Exception as e:
-            print(f"[{self._timestamp()}] Unexpected error: {type(e).__name__}: {e}")
-            return {"error": str(e)}
+
+        result = response.json()
+
+        if wait_for_completion and result.get("execution_id"):
+            return self._poll_execution(result["execution_id"], timeout)
+
+        return result
 
     def _poll_execution(self, execution_id: str, timeout: int) -> dict[str, Any]:
         """Poll for execution completion."""
@@ -170,34 +164,26 @@ class ComposioRecipeClient:
         start_time = time.time()
 
         while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(url)
-                response.raise_for_status()
-                result = response.json()
+            response = self.session.get(url)
+            response.raise_for_status()
+            result = response.json()
 
-                status = result.get("status", "unknown")
-                print(f"[{self._timestamp()}] Status: {status}")
+            status = result.get("status", "unknown")
+            print(f"[{self._timestamp()}] Status: {status}")
 
-                if status in ("completed", "success", "finished") or status in ("failed", "error"):
-                    return result
+            if status in ("completed", "success", "finished", "failed", "error"):
+                return result
 
-                time.sleep(5)  # Poll every 5 seconds
-
-            except requests.exceptions.RequestException as e:
-                print(f"[{self._timestamp()}] Poll error: {type(e).__name__}: {e}")
-                time.sleep(5)
+            time.sleep(5)  # Poll every 5 seconds
 
         return {"error": "Timeout waiting for execution", "execution_id": execution_id}
 
     def get_recipe_details(self, recipe_id: str) -> dict[str, Any]:
         """Get recipe metadata and schema."""
         url = f"{COMPOSIO_API_BASE}/recipes/{recipe_id}"
-        try:
-            response = self.session.get(url)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            return {"error": f"{type(e).__name__}: {e}"}
+        response = self.session.get(url)
+        response.raise_for_status()
+        return response.json()
 
     @staticmethod
     def _timestamp() -> str:
