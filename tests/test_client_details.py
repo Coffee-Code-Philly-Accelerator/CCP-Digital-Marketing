@@ -32,17 +32,21 @@ class TestGetRecipeDetails:
 
     @responses.activate
     def test_http_error(self, client):
+        """HTTP errors propagate (Let It Crash)."""
+        import requests as req_lib
+
         responses.add(
             responses.GET,
             f"{COMPOSIO_API_BASE}/recipes/rcp_bad",
             json={"message": "not found"},
             status=404,
         )
-        result = client.get_recipe_details("rcp_bad")
-        assert "error" in result
+        with pytest.raises(req_lib.exceptions.HTTPError):
+            client.get_recipe_details("rcp_bad")
 
     @responses.activate
     def test_connection_error(self, client):
+        """Connection errors propagate (Let It Crash)."""
         import requests as req_lib
 
         responses.add(
@@ -50,5 +54,5 @@ class TestGetRecipeDetails:
             f"{COMPOSIO_API_BASE}/recipes/rcp_fail",
             body=req_lib.exceptions.ConnectionError("no connection"),
         )
-        result = client.get_recipe_details("rcp_fail")
-        assert "error" in result
+        with pytest.raises(req_lib.exceptions.ConnectionError):
+            client.get_recipe_details("rcp_fail")

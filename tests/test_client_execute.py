@@ -62,14 +62,15 @@ class TestExecuteRecipe:
         assert "HTTP" in result["error"]
 
     @responses.activate
-    def test_connection_error_returns_error_dict(self, client):
+    def test_connection_error_propagates(self, client):
+        """Connection errors propagate (Let It Crash)."""
         responses.add(
             responses.POST,
             f"{COMPOSIO_API_BASE}/recipes/rcp_test/execute",
             body=ConnectionError("Connection refused"),
         )
-        result = client.execute_recipe("rcp_test", {})
-        assert "error" in result
+        with pytest.raises(ConnectionError):
+            client.execute_recipe("rcp_test", {})
 
     @responses.activate
     def test_no_execution_id_returns_immediately(self, client):
