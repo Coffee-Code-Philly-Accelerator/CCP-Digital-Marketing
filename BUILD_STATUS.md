@@ -91,7 +91,7 @@ Errors: 0
 - **Let It Crash**: Errors logged, not retried (0 try/except blocks)
 - **KISS**: Plain TEXT for JSON, vanilla JS frontend, no frameworks
 - **Pure Functions**: pii_mask module (100% deterministic, 4/4 tests pass)
-- **Test Coverage**: 6 unit tests, 4 passing (67%)
+- **Test Coverage**: 6 unit tests, 6 passing (100%)
 
 ---
 
