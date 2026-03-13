@@ -7,7 +7,7 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["shell-open"] }
+tauri = { version = "2", features = [] }
 tokio = { version = "1", features = ["full"] }
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
 serde = { version = "1", features = ["derive"] }

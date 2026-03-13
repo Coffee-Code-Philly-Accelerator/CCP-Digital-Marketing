@@ -11,7 +11,7 @@ async function loadWorkflowTimeline(workflowId) {
     container.style.display = 'block';
 
     try {
-        const toolCalls = await invoke('get_workflow_tool_calls', { workflowId });
+        const toolCalls = await invoke('get_workflow_tool_calls', { workflow_id: workflowId });
 
         if (toolCalls.length === 0) {
             content.innerHTML = '<p style="color: #858585;">No tool calls found for this workflow</p>';
@@ -21,7 +21,7 @@ async function loadWorkflowTimeline(workflowId) {
         // Render timeline
         renderTimeline(toolCalls);
     } catch (error) {
-        content.innerHTML = `<p style="color: #f48771;">Error loading timeline: ${error}</p>`;
+        content.innerHTML = `<p style="color: #f48771;">Error loading timeline: ${escapeHtml(String(error))}</p>`;
     }
 }
 
@@ -63,8 +63,8 @@ function renderTimeline(toolCalls) {
 
         item.innerHTML = `
             <div class="tool-call-header">
-                <span>${index + 1}. ${tc.tool_name}</span>
-                <span>${tc.status.toUpperCase()} (${tc.latency_ms || '?'}ms)</span>
+                <span>${index + 1}. ${escapeHtml(tc.tool_name)}</span>
+                <span>${escapeHtml(tc.status.toUpperCase())} (${tc.latency_ms || '?'}ms)</span>
             </div>
             <div class="tool-call-details">
                 Time: +${timeLabel} | ID: ${tc.id} | Created: ${formatTimestamp(tc.created_at)}
