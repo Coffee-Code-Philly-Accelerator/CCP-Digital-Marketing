@@ -38,11 +38,12 @@ def build_draft_filename(title: str, timestamp: str) -> str:
     return f"{slug}_{ts_clean}.json"
 
 
-def build_draft(event: dict, copies: dict, image_url: str, platform_config: dict) -> dict:
+def build_draft(draft_type: str, event: dict, copies: dict, image_url: str, platform_config: dict) -> dict:
     """Build a draft dict with all required fields."""
     now = datetime.now(timezone.utc).isoformat()
     return {
         "version": 1,
+        "draft_type": draft_type,
         "status": "draft",
         "created_at": now,
         "updated_at": now,
@@ -96,7 +97,7 @@ def validate_draft_for_publish(draft: dict) -> str | None:
     if not draft.get("copies"):
         return "Draft has no copies"
     required_keys = ["twitter", "linkedin", "instagram", "facebook", "discord"]
-    missing = [k for k in required_keys if not draft.get("copies", {}).get(k)]
+    missing = [k for k in required_keys if not draft.get("copies", {}).get(k, "").strip()]
     if missing:
         return f"Draft missing copies for: {', '.join(missing)}"
     return None
@@ -141,6 +142,7 @@ def list_drafts(drafts_dir: str) -> list[dict]:
             {
                 "filename": filename,
                 "filepath": filepath,
+                "draft_type": draft.get("draft_type", "event_promotion"),
                 "status": draft.get("status", "unknown"),
                 "title": draft.get("event", {}).get("title", ""),
                 "date": draft.get("event", {}).get("date", ""),

@@ -3,28 +3,31 @@
 async function loadDraftsList() {
     const { invoke } = window.__TAURI__.core;
     const tbody = document.getElementById('drafts-body');
-    tbody.innerHTML = '<tr><td colspan="5" class="loading">Loading...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="loading">Loading...</td></tr>';
 
     try {
         const drafts = await invoke('list_drafts_cmd');
         if (!drafts || drafts.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="loading">No drafts found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="loading">No drafts found</td></tr>';
             return;
         }
-        tbody.innerHTML = drafts.map(d => `
+        tbody.innerHTML = drafts.map(d => {
+            const typeLabel = d.draft_type === 'social_post' ? 'Social Post' : 'Event';
+            return `
             <tr data-filepath="${escapeHtml(d.filepath)}" style="cursor:pointer;">
                 <td><span class="draft-status-badge status-${d.status}">${escapeHtml(d.status)}</span></td>
+                <td>${escapeHtml(typeLabel)}</td>
                 <td>${escapeHtml(d.title)}</td>
                 <td>${escapeHtml(d.date)}</td>
                 <td>${escapeHtml(d.created_at)}</td>
                 <td>${escapeHtml(d.filename)}</td>
-            </tr>
-        `).join('');
+            </tr>`;
+        }).join('');
         tbody.querySelectorAll('tr[data-filepath]').forEach(row => {
             row.addEventListener('click', () => loadDraftDetail(row.dataset.filepath));
         });
     } catch (error) {
-        tbody.innerHTML = `<tr><td colspan="5" style="color: #f48771;">Error: ${escapeHtml(String(error))}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="color: #f48771;">Error: ${escapeHtml(String(error))}</td></tr>`;
     }
 }
 
@@ -45,6 +48,22 @@ async function loadDraftDetail(filepath) {
 function renderDraftDetail(draft, filepath) {
     const detailDiv = document.getElementById('draft-detail');
     const statusClass = `status-${draft.status}`;
+    const isSocialPost = draft.draft_type === 'social_post';
+
+    const metaHtml = isSocialPost ? `
+        <div class="draft-meta">
+            <p><strong>Message:</strong> ${escapeHtml(draft.event.description || draft.event.title)}</p>
+            ${draft.event.url ? `<p><strong>URL:</strong> ${escapeHtml(draft.event.url)}</p>` : ''}
+            ${draft.image_url ? `<p><strong>Image:</strong> <a href="${escapeHtml(draft.image_url)}" style="color:#4ec9b0;">${escapeHtml(draft.image_url)}</a></p>` : ''}
+        </div>
+    ` : `
+        <div class="draft-meta">
+            <p><strong>Date:</strong> ${escapeHtml(draft.event.date)} at ${escapeHtml(draft.event.time)}</p>
+            <p><strong>Location:</strong> ${escapeHtml(draft.event.location)}</p>
+            <p><strong>URL:</strong> ${escapeHtml(draft.event.url || 'N/A')}</p>
+            ${draft.image_url ? `<p><strong>Image:</strong> <a href="${escapeHtml(draft.image_url)}" style="color:#4ec9b0;">${escapeHtml(draft.image_url)}</a></p>` : ''}
+        </div>
+    `;
 
     detailDiv.innerHTML = `
         <div class="draft-detail-header">
@@ -53,12 +72,7 @@ function renderDraftDetail(draft, filepath) {
             <button onclick="closeDraftDetail()" class="btn-secondary">Close</button>
         </div>
 
-        <div class="draft-meta">
-            <p><strong>Date:</strong> ${escapeHtml(draft.event.date)} at ${escapeHtml(draft.event.time)}</p>
-            <p><strong>Location:</strong> ${escapeHtml(draft.event.location)}</p>
-            <p><strong>URL:</strong> ${escapeHtml(draft.event.url || 'N/A')}</p>
-            ${draft.image_url ? `<p><strong>Image:</strong> <a href="${escapeHtml(draft.image_url)}" style="color:#4ec9b0;">${escapeHtml(draft.image_url)}</a></p>` : ''}
-        </div>
+        ${metaHtml}
 
         <div class="draft-copies">
             <h4>Platform Copies</h4>

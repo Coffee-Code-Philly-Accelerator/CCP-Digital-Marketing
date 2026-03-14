@@ -148,9 +148,9 @@ def validate_recipe(filepath):
     if not has_value_error:
         errors.append("Missing input validation: no ValueError raised for missing required inputs")
 
-    # Check 12: Must assign output variable
+    # Check 12: Must assign output variable (may be inside top-level if/else)
     has_output_assignment = False
-    for node in ast.iter_child_nodes(tree):
+    for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id == "output":

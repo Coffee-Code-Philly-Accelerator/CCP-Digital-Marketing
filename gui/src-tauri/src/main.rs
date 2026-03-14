@@ -15,8 +15,9 @@ mod recipe_commands;
 
 use composio::ComposioClient;
 use config::AppConfig;
-use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,8 +32,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("CCP Digital Marketing - Database: {}", db_path);
 
-    // Initialize SQLite pool
-    let pool = SqlitePool::connect(&format!("sqlite:{}", db_path)).await?;
+    // Ensure parent directory exists
+    if let Some(parent) = std::path::Path::new(&db_path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Initialize SQLite pool (create file if missing)
+    let pool = SqlitePoolOptions::new()
+        .connect_with(
+            SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path))?
+                .create_if_missing(true),
+        )
+        .await?;
 
     // Enable WAL mode and foreign keys
     sqlx::query("PRAGMA journal_mode=WAL")
@@ -76,9 +87,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             draft_commands::load_draft_cmd,
             draft_commands::approve_draft,
             draft_commands::publish_draft,
+            draft_commands::chat_generate_draft,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(tauri::generate_context!())?;
 
     Ok(())
 }

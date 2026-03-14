@@ -14,9 +14,15 @@ use std::sync::LazyLock;
 // Types
 // =============================================================================
 
+fn default_draft_type() -> String {
+    "event_promotion".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Draft {
     pub version: u32,
+    #[serde(default = "default_draft_type")]
+    pub draft_type: String,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -57,6 +63,7 @@ pub struct DraftPlatformConfig {
 pub struct DraftSummary {
     pub filename: String,
     pub filepath: String,
+    pub draft_type: String,
     pub status: String,
     pub title: String,
     pub date: String,
@@ -76,11 +83,15 @@ pub fn slugify(title: &str) -> String {
     let text = RE_NONWORD.replace_all(text, "");
     let text = RE_SEP.replace_all(&text, "-");
     let text = text.trim_matches('-');
-    let text = if text.len() > 80 { &text[..80] } else { text };
+    let text: String = if text.chars().count() > 80 {
+        text.chars().take(80).collect()
+    } else {
+        text.to_string()
+    };
     if text.is_empty() {
         "untitled".to_string()
     } else {
-        text.to_string()
+        text
     }
 }
 
@@ -99,7 +110,42 @@ pub fn build_draft_filename(title: &str, timestamp: &str) -> String {
     format!("{}_{}.json", slug, ts_clean)
 }
 
+pub fn validate_draft_for_publish(draft: &Draft) -> Option<String> {
+    if draft.status != "approved" {
+        return Some(format!(
+            "Draft status is '{}', must be 'approved'",
+            draft.status
+        ));
+    }
+    let copies = &draft.copies;
+    let mut missing = Vec::new();
+    if copies.twitter.trim().is_empty() {
+        missing.push("twitter");
+    }
+    if copies.linkedin.trim().is_empty() {
+        missing.push("linkedin");
+    }
+    if copies.instagram.trim().is_empty() {
+        missing.push("instagram");
+    }
+    if copies.facebook.trim().is_empty() {
+        missing.push("facebook");
+    }
+    if copies.discord.trim().is_empty() {
+        missing.push("discord");
+    }
+    if !missing.is_empty() {
+        return Some(format!("Draft missing copies for: {}", missing.join(", ")));
+    }
+    None
+}
+
+// =============================================================================
+// I/O Boundary Functions
+// =============================================================================
+
 pub fn build_draft(
+    draft_type: &str,
     event: &DraftEvent,
     copies: &DraftCopies,
     image_url: &str,
@@ -108,6 +154,7 @@ pub fn build_draft(
     let now = Utc::now().to_rfc3339();
     Draft {
         version: 1,
+        draft_type: draft_type.to_string(),
         status: "draft".to_string(),
         created_at: now.clone(),
         updated_at: now,
@@ -131,39 +178,16 @@ pub fn set_publish_results(mut draft: Draft, results: serde_json::Value) -> Draf
     draft
 }
 
-pub fn validate_draft_for_publish(draft: &Draft) -> Option<String> {
-    if draft.status != "approved" {
-        return Some(format!(
-            "Draft status is '{}', must be 'approved'",
-            draft.status
-        ));
+pub fn validate_draft_path(drafts_dir: &str, filepath: &str) -> Result<PathBuf, String> {
+    let canonical = fs::canonicalize(filepath)
+        .map_err(|e| format!("Invalid path: {}", e))?;
+    let drafts_canonical = fs::canonicalize(drafts_dir)
+        .map_err(|e| format!("Invalid drafts dir: {}", e))?;
+    if !canonical.starts_with(&drafts_canonical) {
+        return Err("Path is outside drafts directory".to_string());
     }
-    let copies = &draft.copies;
-    let mut missing = Vec::new();
-    if copies.twitter.is_empty() {
-        missing.push("twitter");
-    }
-    if copies.linkedin.is_empty() {
-        missing.push("linkedin");
-    }
-    if copies.instagram.is_empty() {
-        missing.push("instagram");
-    }
-    if copies.facebook.is_empty() {
-        missing.push("facebook");
-    }
-    if copies.discord.is_empty() {
-        missing.push("discord");
-    }
-    if !missing.is_empty() {
-        return Some(format!("Draft missing copies for: {}", missing.join(", ")));
-    }
-    None
+    Ok(canonical)
 }
-
-// =============================================================================
-// I/O Boundary Functions
-// =============================================================================
 
 pub fn save_draft(drafts_dir: &str, draft: &Draft) -> Result<PathBuf, String> {
     fs::create_dir_all(drafts_dir).map_err(|e| format!("Failed to create drafts dir: {}", e))?;
@@ -215,6 +239,7 @@ pub fn list_drafts(drafts_dir: &str) -> Result<Vec<DraftSummary>, String> {
         results.push(DraftSummary {
             filename: entry.file_name().to_string_lossy().to_string(),
             filepath: filepath.display().to_string(),
+            draft_type: draft.draft_type,
             status: draft.status,
             title: draft.event.title,
             date: draft.event.date,

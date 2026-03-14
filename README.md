@@ -665,9 +665,10 @@ If a recipe returns `NEEDS_AUTH`, re-run auth-setup with the existing `profile_i
 | `CCP_HYPERBROWSER_MAX_STEPS` | No | `25` | Max agent steps per browser task |
 | `CCP_HYPERBROWSER_USE_STEALTH` | No | `true` | Stealth mode for anti-bot evasion |
 | `CCP_CACHE_DB_PATH` | No | `~/.claude/cache/state.db` | SQLite database for telemetry cache (GUI) |
+| `CCP_PROJECT_ROOT` | No | (auto-detected) | Project root for draft file resolution (GUI) |
 | `CCP_DRAFTS_DIR` | No | `<project_root>/drafts` | Override drafts directory path (GUI) |
 
-See `scripts/.env.example` for the full list including optional overrides.
+See [`scripts/.env.example`](scripts/.env.example) for the full list including optional overrides.
 
 ## Troubleshooting
 
@@ -727,6 +728,7 @@ CCP-Digital-Marketing/
 ├── drafts/                      # Draft JSON files (gitignored, shared by CLI + GUI)
 ├── .claude/skills/
 │   ├── auth-setup/              # Hyperbrowser persistent auth profile setup
+│   ├── email-reply/             # Email reply review skill
 │   ├── luma-create/             # Luma event creation skill
 │   ├── meetup-create/           # Meetup event creation skill
 │   ├── partiful-create/         # Partiful event creation skill
