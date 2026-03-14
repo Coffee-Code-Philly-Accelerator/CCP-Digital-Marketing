@@ -447,7 +447,7 @@ def generate_drafts(
         "facebook_page_id": facebook_page_id,
         "skip_platforms": skip_platforms,
     }
-    draft = build_draft(event, copies, image_url, platform_config)
+    draft = build_draft("event_promotion", event, copies, image_url, platform_config)
     filepath = save_draft(drafts_dir, draft)
     print(f"[{ComposioRecipeClient._timestamp()}] Draft saved: {filepath}")
 
@@ -713,13 +713,13 @@ Environment Variables:
         sys.exit(1)
 
     # Initialize client
-    try:
-        client = ComposioRecipeClient()
-    except ValueError as e:
-        print(f"Error: {e}")
+    api_key = os.environ.get("COMPOSIO_API_KEY")
+    if not api_key:
+        print("Error: COMPOSIO_API_KEY not found.")
         print("\nSet your API key:")
         print("  export COMPOSIO_API_KEY='your-api-key'")
         sys.exit(1)
+    client = ComposioRecipeClient(api_key=api_key)
 
     # Execute command
     if args.command == "create-event":

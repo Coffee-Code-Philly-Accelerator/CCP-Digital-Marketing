@@ -433,6 +433,106 @@
             padding: 20px;
             color: #858585;
         }
+
+        /* ======== Chat Tab ======== */
+        #chat-messages {
+            max-height: 500px;
+            overflow-y: auto;
+            padding: 12px;
+            background: #1e1e1e;
+            border: 1px solid #3e3e3e;
+            border-radius: 4px;
+            margin-bottom: 12px;
+        }
+
+        .chat-msg {
+            margin-bottom: 12px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            max-width: 85%;
+            line-height: 1.4;
+            font-size: 14px;
+        }
+
+        .chat-msg-user {
+            background: #264f78;
+            margin-left: auto;
+            border-bottom-right-radius: 2px;
+        }
+
+        .chat-msg-system {
+            background: #2d2d2d;
+            border-bottom-left-radius: 2px;
+        }
+
+        .chat-msg-thinking {
+            background: #2d2d2d;
+            color: #858585;
+            font-style: italic;
+        }
+
+        .chat-copies-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .chat-copy-item {
+            background: #1e1e1e;
+            border: 1px solid #3e3e3e;
+            border-radius: 4px;
+            padding: 10px;
+        }
+
+        .chat-copy-item label {
+            display: block;
+            color: #569cd6;
+            font-size: 11px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+
+        .chat-copy-item p {
+            font-size: 13px;
+            white-space: pre-wrap;
+            line-height: 1.4;
+        }
+
+        .chat-input-area {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .chat-input-area textarea {
+            flex: 1;
+            min-height: 44px;
+            max-height: 120px;
+        }
+
+        .chat-settings-toggle {
+            color: #858585;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 13px;
+            padding: 6px 0;
+        }
+
+        .chat-settings-toggle:hover {
+            color: #d4d4d4;
+        }
+
+        .chat-settings {
+            display: none;
+            margin-top: 10px;
+        }
+
+        .chat-settings.open {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -444,6 +544,7 @@
             <button class="tab-btn" data-tab="create-event">Create Event</button>
             <button class="tab-btn" data-tab="social-post">Social Post</button>
             <button class="tab-btn" data-tab="drafts">Drafts</button>
+            <button class="tab-btn" data-tab="chat">Chat</button>
         </nav>
     </header>
 
@@ -716,6 +817,7 @@
                 <thead>
                     <tr>
                         <th>Status</th>
+                        <th>Type</th>
                         <th>Title</th>
                         <th>Date</th>
                         <th>Created</th>
@@ -723,13 +825,74 @@
                     </tr>
                 </thead>
                 <tbody id="drafts-body">
-                    <tr><td colspan="5" class="loading">Click "Refresh" to load drafts</td></tr>
+                    <tr><td colspan="6" class="loading">Click "Refresh" to load drafts</td></tr>
                 </tbody>
             </table>
         </div>
 
         <!-- Draft Detail -->
         <div id="draft-detail"></div>
+    </section>
+
+    <!-- ======== Chat Tab ======== -->
+    <section id="tab-chat" class="tab-section">
+        <h2>Chat - Generate Social Post</h2>
+
+        <div class="form-section">
+            <div id="chat-messages"></div>
+
+            <div class="chat-input-area">
+                <textarea id="chat-input" placeholder="Describe what you want to post... (Enter to send, Shift+Enter for newline)"></textarea>
+                <button id="chat-send-btn" class="btn-primary" onclick="submitChatMessage()">Generate</button>
+            </div>
+
+            <button class="chat-settings-toggle" onclick="toggleChatSettings()">Optional Settings</button>
+            <div id="chat-settings" class="chat-settings">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>URL</label>
+                        <input type="text" id="chat-url" placeholder="https://example.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Tone</label>
+                        <select id="chat-tone">
+                            <option value="">Default</option>
+                            <option value="engaging">Engaging</option>
+                            <option value="professional">Professional</option>
+                            <option value="casual">Casual</option>
+                            <option value="excited">Excited</option>
+                            <option value="informative">Informative</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Image URL (reuse existing)</label>
+                        <input type="text" id="chat-image-url" placeholder="https://...">
+                    </div>
+                    <div class="form-group">
+                        <label>Image Prompt (Gemini)</label>
+                        <input type="text" id="chat-image-prompt" placeholder="Custom image generation prompt">
+                    </div>
+                    <div class="form-group">
+                        <label>CTA</label>
+                        <input type="text" id="chat-cta" placeholder="Call-to-action text">
+                    </div>
+                    <div class="form-group">
+                        <label>Hashtags</label>
+                        <input type="text" id="chat-hashtags" placeholder="#tech #philly">
+                    </div>
+                    <div class="form-group">
+                        <label>Discord Channel ID</label>
+                        <input type="text" id="chat-discord-channel">
+                    </div>
+                    <div class="form-group">
+                        <label>Facebook Page ID</label>
+                        <input type="text" id="chat-facebook-page">
+                    </div>
+                </div>
+            </div>
+
+            <div id="chat-progress" class="progress-panel" style="display:none;"></div>
+        </div>
     </section>
 
     <!-- Scripts: shared utilities first, then feature modules -->
@@ -740,6 +903,7 @@
     <script src="event-form.js"></script>
     <script src="social-post-form.js"></script>
     <script src="drafts-view.js"></script>
+    <script src="chat-view.js"></script>
 
     <script>
         const { invoke } = window.__TAURI__.core;
