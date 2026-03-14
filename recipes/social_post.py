@@ -167,7 +167,9 @@ else:
 # Step 2: Generate platform-specific copy (or use pre-generated)
 if pre_generated_copies:
     print(f"[{datetime.utcnow().isoformat()}] Using pre-generated copies")
-    copies = extract_json_from_text(pre_generated_copies) if isinstance(pre_generated_copies, str) else pre_generated_copies
+    copies = (
+        extract_json_from_text(pre_generated_copies) if isinstance(pre_generated_copies, str) else pre_generated_copies
+    )
     required_keys = ["twitter", "linkedin", "instagram", "facebook", "discord"]
     if not copies or not all(k in copies for k in required_keys):
         raise ValueError("pre_generated_copies missing required platform keys")

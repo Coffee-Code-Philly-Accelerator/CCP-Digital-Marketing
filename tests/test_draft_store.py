@@ -68,10 +68,11 @@ class TestBuildDraft:
             "skip_platforms": "",
         }
 
-        draft = build_draft(event, copies, "https://img.example.com/photo.jpg", platform_config)
+        draft = build_draft("event_promotion", event, copies, "https://img.example.com/photo.jpg", platform_config)
 
         assert draft["version"] == 1
         assert draft["status"] == "draft"
+        assert draft["draft_type"] == "event_promotion"
         assert draft["event"]["title"] == "AI Workshop"
         assert draft["copies"]["twitter"] == "tweet"
         assert draft["image_url"] == "https://img.example.com/photo.jpg"
@@ -81,7 +82,7 @@ class TestBuildDraft:
         assert "updated_at" in draft
 
     def test_missing_optional_fields(self):
-        draft = build_draft({}, {}, "", {})
+        draft = build_draft("social_post", {}, {}, "", {})
         assert draft["event"]["title"] == ""
         assert draft["copies"]["twitter"] == ""
         assert draft["image_url"] == ""
@@ -152,7 +153,7 @@ class TestSaveAndLoadDraft:
             "url": "https://example.com",
         }
         copies = {"twitter": "t", "linkedin": "l", "instagram": "i", "facebook": "f", "discord": "d"}
-        draft = build_draft(event, copies, "https://img.example.com/photo.jpg", {})
+        draft = build_draft("event_promotion", event, copies, "https://img.example.com/photo.jpg", {})
 
         filepath = save_draft(str(tmp_path), draft)
         loaded = load_draft(filepath)
@@ -164,7 +165,7 @@ class TestSaveAndLoadDraft:
 
     def test_creates_directory(self, tmp_path):
         nested_dir = str(tmp_path / "nested" / "drafts")
-        draft = build_draft({"title": "Test"}, {}, "", {})
+        draft = build_draft("event_promotion", {"title": "Test"}, {}, "", {})
         filepath = save_draft(nested_dir, draft)
         assert os.path.exists(filepath)
 
@@ -181,7 +182,7 @@ class TestListDrafts:
                 "url": "",
             }
             copies = {"twitter": "t", "linkedin": "l", "instagram": "i", "facebook": "f", "discord": "d"}
-            draft = build_draft(event, copies, "", {})
+            draft = build_draft("event_promotion", event, copies, "", {})
             save_draft(str(tmp_path), draft)
 
         results = list_drafts(str(tmp_path))
@@ -200,6 +201,7 @@ class TestListDrafts:
         (tmp_path / ".gitkeep").write_text("")
         (tmp_path / "notes.txt").write_text("hello")
         draft = build_draft(
+            "event_promotion",
             {"title": "Real Draft"},
             {"twitter": "t", "linkedin": "l", "instagram": "i", "facebook": "f", "discord": "d"},
             "",
