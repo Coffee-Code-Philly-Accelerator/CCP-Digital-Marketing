@@ -47,8 +47,6 @@ python scripts/recipe_client.py social-post \
 python scripts/recipe_client.py info
 ```
 
-## Development Commands
-
 ### Tauri GUI (gui/)
 
 ```bash
@@ -134,7 +132,7 @@ All event creation recipes default to Hyperbrowser (`HYPERBROWSER_START_BROWSER_
 - `BROWSER_TOOL_FETCH_WEBPAGE` - Get current page state
 - `BROWSER_TOOL_TAKE_SCREENSHOT` - Capture screenshot (debugging)
 
-> **Note:** v1 tools require ~10 sequential calls for event creation, exceeding the 4-minute Rube runtime timeout. All recipes now use v2.
+> **Note:** v1 tools require ~10 sequential calls for event creation, exceeding the 4-minute Rube runtime timeout. All recipes now use v2 (browser_tool) or v3 (Hyperbrowser).
 
 ### Social APIs
 - `TWITTER_CREATION_OF_A_POST`
@@ -453,6 +451,17 @@ except Exception:
         result = fallback_method()
     except Exception:
         result = default_value
+
+# FORBIDDEN - Defensive null checks that obscure the real problem
+def process_event(event):
+    if not event:
+        return  # Why is event None? Where did it come from?
+    if not event.get("title"):
+        return
+    if not event.get("date"):
+        return
+    # ... actual logic buried under defensive checks
+    # FIX: Validate once at the boundary, then trust the data downstream
 ```
 
 ### The ONLY Exception (Literally)
@@ -472,6 +481,27 @@ If you find yourself wanting to write more than this, **stop and redesign**. The
 ### Code Review Rule
 
 **Any `try/except` block in a PR requires explicit justification in the PR description.** The default review stance is: remove it.
+
+### Testing Implications
+
+Tests should crash on unexpected errors -- not swallow them. A test that catches exceptions to avoid failure is hiding bugs, not proving correctness.
+
+- **Let assertions fail visibly.** A test that returns early on `None` instead of crashing tells you nothing about *why* the value was missing.
+- **Don't mock away error conditions.** If a function crashes when given bad data, that crash IS the test result -- it reveals missing validation at the boundary.
+- **Crash = signal.** An unexpected error in a test reveals integration issues, incorrect data assumptions, or missing upstream validation. Suppressing it delays the fix.
+
+```python
+# BAD - Test hides the real problem
+def test_create_event():
+    result = create_event_payload(title=None, date="2026-01-25", time="6 PM")
+    if result is None:
+        return  # Silently passes -- but WHY was result None?
+
+# GOOD - Test crashes visibly, revealing the issue
+def test_create_event():
+    result = create_event_payload(title="Hack Night", date="2026-01-25", time="6 PM")
+    assert result["event_title"] == "Hack Night"  # Crashes with clear message if wrong
+```
 
 ---
 
@@ -538,11 +568,119 @@ def create_event(platform: str, details: dict):
 
 Implementations must honor the contract of the base type. Consumers shouldn't need to know the specific implementation.
 
+**Contract violations to watch for:**
+- **Strengthening preconditions**: Subtype rejects inputs the base type accepts
+- **Weakening postconditions**: Subtype returns less or different data than the base type promises
+- **Throwing unexpected errors**: Subtype crashes where the base type guarantees success
+
+```python
+# BAD - Subtype strengthens preconditions (violates LSP)
+class EventPoster:
+    def post(self, content: str, platform: str) -> dict:
+        """Post content to any platform. Returns {"status": "DONE", "url": "..."}."""
+        ...
+
+class RestrictedPoster(EventPoster):
+    def post(self, content: str, platform: str) -> dict:
+        if platform not in ("twitter", "linkedin"):
+            raise ValueError("Unsupported platform")  # Caller didn't expect this!
+        ...
+
+# GOOD - Subtype honors the base contract
+class RestrictedPoster(EventPoster):
+    def post(self, content: str, platform: str) -> dict:
+        if platform not in ("twitter", "linkedin"):
+            return {"status": "SKIPPED", "reason": f"{platform} not supported"}
+        ...  # Same return shape, no surprise errors
+```
+
+```rust
+// BAD - Trait impl violates the contract by panicking
+trait RecipeExecutor {
+    /// Execute a recipe. Returns Ok(output) or Err(message).
+    fn execute(&self, recipe_id: &str, input: serde_json::Value) -> Result<String, String>;
+}
+
+struct StrictExecutor;
+impl RecipeExecutor for StrictExecutor {
+    fn execute(&self, recipe_id: &str, input: serde_json::Value) -> Result<String, String> {
+        if recipe_id.is_empty() {
+            panic!("empty recipe ID");  // Caller expected Err, not a panic!
+        }
+        Ok("done".into())
+    }
+}
+
+// GOOD - Trait impl honors the Result contract
+impl RecipeExecutor for StrictExecutor {
+    fn execute(&self, recipe_id: &str, input: serde_json::Value) -> Result<String, String> {
+        if recipe_id.is_empty() {
+            return Err("empty recipe ID".into());  // Caller can handle this
+        }
+        Ok("done".into())
+    }
+}
+```
+
 ### 4. Interface Segregation Principle (ISP)
 
 > "Clients should not be forced to depend on interfaces they don't use"
 
 Many specific interfaces > one general-purpose interface. Avoid "fat" interfaces that force implementing unused methods.
+
+```rust
+// BAD - Monolithic trait forces implementors to stub unused methods
+trait PlatformClient {
+    fn create_event(&self, details: &EventDetails) -> Result<String, String>;
+    fn post_social(&self, content: &str) -> Result<String, String>;
+    fn fetch_analytics(&self) -> Result<Vec<Metric>, String>;
+    fn manage_profile(&self, profile_id: &str) -> Result<(), String>;
+}
+
+// A social-only client must implement create_event and fetch_analytics as stubs
+struct TwitterClient;
+impl PlatformClient for TwitterClient {
+    fn create_event(&self, _: &EventDetails) -> Result<String, String> {
+        Err("not supported".into())  // Dead code -- ISP violation
+    }
+    fn post_social(&self, content: &str) -> Result<String, String> { /* ... */ Ok("done".into()) }
+    fn fetch_analytics(&self) -> Result<Vec<Metric>, String> {
+        Err("not supported".into())  // Dead code -- ISP violation
+    }
+    fn manage_profile(&self, _: &str) -> Result<(), String> {
+        Err("not supported".into())  // Dead code -- ISP violation
+    }
+}
+
+// GOOD - Segregated traits, implement only what's needed
+trait EventCreator {
+    fn create_event(&self, details: &EventDetails) -> Result<String, String>;
+}
+
+trait SocialPoster {
+    fn post_social(&self, content: &str) -> Result<String, String>;
+}
+
+trait AnalyticsProvider {
+    fn fetch_analytics(&self) -> Result<Vec<Metric>, String>;
+}
+
+// TwitterClient only implements what it actually does
+impl SocialPoster for TwitterClient {
+    fn post_social(&self, content: &str) -> Result<String, String> { /* ... */ Ok("done".into()) }
+}
+```
+
+```python
+# BAD - Function takes a god-object it barely uses
+def generate_social_copy(event: dict) -> str:
+    # Only needs title, date, url -- but takes the entire event dict
+    return f"Join us for {event['title']} on {event['date']}! {event['url']}"
+
+# GOOD - Function takes only what it needs (minimal interface)
+def generate_social_copy(title: str, date: str, url: str) -> str:
+    return f"Join us for {title} on {date}! {url}"
+```
 
 ### 5. Dependency Inversion Principle (DIP)
 
@@ -562,6 +700,50 @@ class EventCreator:
         self.api_key = api_key  # Testable, swappable
 ```
 
+```rust
+// Rust DIP example: Abstract ComposioClient behind a trait for testability.
+// The real Tauri commands depend on the trait, not the concrete HTTP client.
+
+// Abstraction (trait)
+#[async_trait]
+trait RecipeClient {
+    async fn execute(&self, recipe_id: &str, input: serde_json::Value) -> Result<String, String>;
+    async fn poll_status(&self, execution_id: &str) -> Result<String, String>;
+}
+
+// Production implementation
+struct ComposioClient { api_key: String, base_url: String }
+
+#[async_trait]
+impl RecipeClient for ComposioClient {
+    async fn execute(&self, recipe_id: &str, input: serde_json::Value) -> Result<String, String> {
+        // Real HTTP call to Composio API
+        todo!()
+    }
+    async fn poll_status(&self, execution_id: &str) -> Result<String, String> {
+        todo!()
+    }
+}
+
+// Test implementation -- no network, deterministic
+struct MockClient { responses: HashMap<String, String> }
+
+#[async_trait]
+impl RecipeClient for MockClient {
+    async fn execute(&self, recipe_id: &str, _input: serde_json::Value) -> Result<String, String> {
+        self.responses.get(recipe_id).cloned().ok_or("not found".into())
+    }
+    async fn poll_status(&self, _execution_id: &str) -> Result<String, String> {
+        Ok("DONE".into())
+    }
+}
+
+// Command depends on abstraction, not ComposioClient directly
+async fn create_event(client: &dyn RecipeClient, details: serde_json::Value) -> Result<String, String> {
+    client.execute("rcp_mXyFyALaEsQF", details).await
+}
+```
+
 ### Code Review Checklist
 
 - [ ] Does this component have a single, clear purpose? (SRP)
@@ -571,6 +753,45 @@ class EventCreator:
 - [ ] Am I depending on abstractions, not concrete types? (DIP)
 
 **BALANCE**: Don't over-engineer. For simple utilities, pragmatism > purity.
+
+### SOLID and Testing
+
+Each SOLID principle directly enables better testing:
+
+| Principle | Testing Benefit |
+|-----------|----------------|
+| **SRP** | Small, focused units = small, focused tests. A function that does one thing needs one test suite, not a combinatorial explosion. |
+| **OCP** | New behavior = new tests, not rewriting old ones. Existing tests stay green when you extend via configuration. |
+| **LSP** | Write tests against the base contract, run them against every implementation. If a subtype passes the base tests, it's substitutable. |
+| **ISP** | Narrow interfaces = fewer test doubles. A mock that implements 2 methods is easier to maintain than one that stubs 10. |
+| **DIP** | Inject test doubles at construction. No monkey-patching, no test-only flags, no conditional imports. |
+
+```python
+# BAD - Hard dependency makes testing require real API calls
+class SocialPromoter:
+    def __init__(self):
+        self.client = ComposioRecipeClient()  # Can't swap in tests
+
+    def promote(self, event: dict) -> dict:
+        return self.client.execute_recipe("rcp_X65IirgPhwh3", event)
+
+# GOOD - Injected dependency, trivially testable
+class SocialPromoter:
+    def __init__(self, client):  # Accept any object with execute_recipe()
+        self.client = client
+
+    def promote(self, event: dict) -> dict:
+        return self.client.execute_recipe("rcp_X65IirgPhwh3", event)
+
+# In tests:
+class FakeClient:
+    def execute_recipe(self, recipe_id, input_data):
+        return {"status": "DONE", "results": {"twitter": "posted"}}
+
+promoter = SocialPromoter(client=FakeClient())
+result = promoter.promote({"title": "Hack Night"})
+assert result["status"] == "DONE"
+```
 
 ---
 
