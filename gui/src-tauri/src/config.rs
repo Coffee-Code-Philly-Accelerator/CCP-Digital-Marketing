@@ -57,4 +57,3 @@ pub fn recipe_ids() -> HashMap<&'static str, &'static str> {
         ("social_post", "rcp_3LheyoNQpiFK"),
     ])
 }
-

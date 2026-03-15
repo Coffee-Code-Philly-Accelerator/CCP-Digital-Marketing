@@ -40,8 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize SQLite pool (create file if missing)
     let pool = SqlitePoolOptions::new()
         .connect_with(
-            SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path))?
-                .create_if_missing(true),
+            SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path))?.create_if_missing(true),
         )
         .await?;
 
@@ -49,9 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query("PRAGMA journal_mode=WAL")
         .execute(&pool)
         .await?;
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await?;
+    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
 
     println!("SQLite connection established (WAL mode)");
 

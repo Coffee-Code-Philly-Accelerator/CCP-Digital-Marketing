@@ -99,7 +99,10 @@ pub fn build_draft_filename(title: &str, timestamp: &str) -> String {
     let slug = slugify(title);
     let has_z = timestamp.ends_with('Z');
     // Compact timestamp: remove colons and hyphens
-    let ts_clean: String = timestamp.chars().filter(|c| *c != ':' && *c != '-').collect();
+    let ts_clean: String = timestamp
+        .chars()
+        .filter(|c| *c != ':' && *c != '-')
+        .collect();
     // Drop microseconds (everything after '.')
     let ts_clean = ts_clean.split('.').next().unwrap_or(&ts_clean);
     let ts_clean = if has_z && !ts_clean.ends_with('Z') {
@@ -179,10 +182,9 @@ pub fn set_publish_results(mut draft: Draft, results: serde_json::Value) -> Draf
 }
 
 pub fn validate_draft_path(drafts_dir: &str, filepath: &str) -> Result<PathBuf, String> {
-    let canonical = fs::canonicalize(filepath)
-        .map_err(|e| format!("Invalid path: {}", e))?;
-    let drafts_canonical = fs::canonicalize(drafts_dir)
-        .map_err(|e| format!("Invalid drafts dir: {}", e))?;
+    let canonical = fs::canonicalize(filepath).map_err(|e| format!("Invalid path: {}", e))?;
+    let drafts_canonical =
+        fs::canonicalize(drafts_dir).map_err(|e| format!("Invalid drafts dir: {}", e))?;
     if !canonical.starts_with(&drafts_canonical) {
         return Err("Path is outside drafts directory".to_string());
     }

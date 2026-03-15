@@ -100,7 +100,7 @@ pub async fn search_correlation(
         WHERE tc.request_json LIKE ? OR tc.response_json LIKE ?
         ORDER BY w.created_at DESC
         LIMIT 50
-        "#
+        "#,
     )
     .bind(&search_pattern)
     .bind(&search_pattern)

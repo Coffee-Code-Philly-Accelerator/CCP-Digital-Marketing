@@ -99,8 +99,8 @@ async fn generate_copies(
         )
         .await?;
 
-    let content = extract_llm_content(&result)
-        .ok_or_else(|| "LLM returned no content".to_string())?;
+    let content =
+        extract_llm_content(&result).ok_or_else(|| "LLM returned no content".to_string())?;
 
     let copies = extract_json_from_text(&content)
         .ok_or_else(|| format!("Failed to parse JSON from LLM response: {}", content))?;
@@ -188,11 +188,7 @@ fn value_as_string_id(data: &Value, key: &str) -> String {
         .unwrap_or_default()
 }
 
-async fn post_to_linkedin(
-    client: &ComposioClient,
-    app: &AppHandle,
-    draft: &Draft,
-) -> String {
+async fn post_to_linkedin(client: &ComposioClient, app: &AppHandle, draft: &Draft) -> String {
     let profile_result = client
         .execute_tool(
             "LINKEDIN_GET_MY_INFO",
@@ -244,11 +240,7 @@ async fn post_to_linkedin(
     }
 }
 
-async fn post_to_instagram(
-    client: &ComposioClient,
-    app: &AppHandle,
-    draft: &Draft,
-) -> String {
+async fn post_to_instagram(client: &ComposioClient, app: &AppHandle, draft: &Draft) -> String {
     if draft.image_url.is_empty() {
         return "skipped: no image available".to_string();
     }
@@ -458,7 +450,13 @@ pub async fn generate_drafts(
         skip_platforms: skip,
     };
 
-    let draft_obj = build_draft("event_promotion", &event, &copies, &image_url, &platform_config);
+    let draft_obj = build_draft(
+        "event_promotion",
+        &event,
+        &copies,
+        &image_url,
+        &platform_config,
+    );
     let filepath = save_draft(&client.config.drafts_dir, &draft_obj)?;
 
     Ok(json!({
@@ -470,9 +468,7 @@ pub async fn generate_drafts(
 
 /// List all drafts.
 #[tauri::command]
-pub async fn list_drafts_cmd(
-    client: tauri::State<'_, ComposioClient>,
-) -> Result<Value, String> {
+pub async fn list_drafts_cmd(client: tauri::State<'_, ComposioClient>) -> Result<Value, String> {
     let drafts = draft::list_drafts(&client.config.drafts_dir)?;
     serde_json::to_value(drafts).map_err(|e| format!("Serialization error: {}", e))
 }
@@ -584,10 +580,15 @@ pub async fn publish_draft(
         "image_url": draft.image_url,
     });
 
-    let success_count = [&linkedin_result, &instagram_result, &facebook_result, &discord_result]
-        .iter()
-        .filter(|s| s.as_str() == "success")
-        .count();
+    let success_count = [
+        &linkedin_result,
+        &instagram_result,
+        &facebook_result,
+        &discord_result,
+    ]
+    .iter()
+    .filter(|s| s.as_str() == "success")
+    .count();
     results["summary"] = json!(format!("Posted to {}/5 platforms", success_count));
 
     let new_status = if success_count > 0 {
