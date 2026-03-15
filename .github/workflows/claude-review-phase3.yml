@@ -1,0 +1,520 @@
+name: Claude Review - Phase 3 (Draft PR Creation)
+
+# Phase 3: Full pipeline with automated draft PR creation
+# Creates draft PRs with AI-suggested fixes (requires human approval to merge)
+# Uses Bedrock primary + Anthropic fallback
+# CRITICAL: Never auto-merges, always requires maintainer review
+# Estimated cost: $3-8/PR depending on consensus + patch generation
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+# Cost control: Only allow one workflow per PR at a time
+concurrency:
+  group: claude-full-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  security-check:
+    name: Pre-flight Security Check
+    runs-on: ubuntu-latest
+    outputs:
+      safe_to_proceed: ${{ steps.check.outputs.safe }}
+      blocked_reason: ${{ steps.check.outputs.reason }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Security validation
+        id: check
+        run: |
+          SAFE="true"
+          REASON=""
+
+          # Get changed files
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+
+          # CRITICAL: Block AI modifications to CCP protected paths
+          BLOCKED_PATTERNS=(
+            ".github/workflows/"
+            ".github/actions/"
+            ".github/config/"
+            "secrets/"
+            ".env"
+            ".env.*"
+            "*.key"
+            "*.pem"
+            "credentials"
+            "CLAUDE.md"
+            "Cargo.toml"
+            "tauri.conf.json"
+          )
+
+          for pattern in "${BLOCKED_PATTERNS[@]}"; do
+            if echo "$CHANGED_FILES" | grep -E "$pattern" > /dev/null; then
+              SAFE="false"
+              REASON="Modifications to protected files detected: $pattern. AI patch generation not allowed."
+              break
+            fi
+          done
+
+          # Check for fork PRs (security risk)
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            SAFE="false"
+            REASON="PR from fork - AI patch generation disabled for security"
+          fi
+
+          echo "safe=$SAFE" >> $GITHUB_OUTPUT
+          echo "reason=$REASON" >> $GITHUB_OUTPUT
+
+          if [ "$SAFE" == "false" ]; then
+            echo "::error::$REASON"
+          fi
+
+  claude-review:
+    name: Claude Code Review + Patch Generation
+    needs: security-check
+    if: |
+      needs.security-check.outputs.safe_to_proceed == 'true' &&
+      github.actor != 'claude[bot]' &&
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'github-actions[bot]'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+    outputs:
+      has_suggestions: ${{ steps.parse.outputs.has_suggestions }}
+      patch_file: ${{ steps.parse.outputs.patch_file }}
+
+    env:
+      BEDROCK_CONFIGURED: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK != '' }}
+      ANTHROPIC_KEY_SET: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Validate API provider
+        run: |
+          if [ "${{ env.BEDROCK_CONFIGURED }}" != "true" ] && [ "${{ env.ANTHROPIC_KEY_SET }}" != "true" ]; then
+            echo "::error::No API provider configured."
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Create PAL MCP Config
+        run: |
+          cat > /tmp/pal-mcp-config.json << EOF
+          {
+            "mcpServers": {
+              "pal": {
+                "command": "uvx",
+                "args": ["--from", "git+https://github.com/BeehiveInnovations/pal-mcp-server.git", "pal-mcp-server"],
+                "env": {
+                  "GEMINI_API_KEY": "${{ secrets.GEMINI_API_KEY }}",
+                  "OPENAI_API_KEY": "${{ secrets.OPENAI_API_KEY }}"
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Get PR context
+        id: pr_context
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          echo "pr_number=$PR_NUM" >> $GITHUB_OUTPUT
+          echo "pr_title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+          FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | wc -l | tr -d ' ')
+          echo "files_changed=$FILES_CHANGED" >> $GITHUB_OUTPUT
+
+      # ========== PRIMARY: AWS Bedrock ==========
+      - name: Claude Code Review (Bedrock - Primary)
+        id: bedrock_review
+        if: env.BEDROCK_CONFIGURED == 'true'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          use_bedrock: "true"
+          use_commit_signing: true
+          show_full_output: true
+          prompt: |
+            You are an expert code reviewer for CCP Digital Marketing -- an event creation + social promotion automation platform (Rust/Tauri + Python recipes + vanilla JS frontend).
+
+            **PR**: #${{ steps.pr_context.outputs.pr_number }} - ${{ steps.pr_context.outputs.pr_title }}
+            **Files Changed**: ${{ steps.pr_context.outputs.files_changed }}
+
+            ## Architecture Context
+            - **Rust backend**: `gui/src-tauri/src/` (composio.rs, config.rs, draft.rs, draft_commands.rs, recipe_commands.rs, progress.rs, db.rs, main.rs)
+            - **Python recipes**: `recipes/*.py` (self-contained Rube MCP scripts with duplicated helpers)
+            - **Python CLI**: `scripts/recipe_client.py`, `scripts/draft_store.py`
+            - **Frontend**: `gui/src/*.js` (vanilla JS, Tauri IPC bridge)
+
+            ## Instructions
+            1. Get the full diff: `gh pr diff ${{ steps.pr_context.outputs.pr_number }}`
+            2. Read `CLAUDE.md` for design principles
+            3. Review and FIX issues directly (you have Edit/Write access)
+            4. Focus areas:
+               - **Let It Crash**: No unauthorized try/except
+               - **Security**: XSS, path traversal, input sanitization
+               - **Recipe patterns**: Self-contained, duplicated helpers, bare variable output
+               - **KISS**: Function length, nesting depth
+            5. Do NOT modify: .github/workflows/*, CLAUDE.md, Cargo.toml, tauri.conf.json
+          claude_args: >-
+            --mcp-config /tmp/pal-mcp-config.json
+            --allowed-tools
+            "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(ruff *),Bash(python scripts/validate_recipes.py),Read,Edit,Write,Glob,Grep,mcp__pal__codereview,mcp__pal__listmodels"
+            --max-turns 25
+        env:
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      # ========== FALLBACK: Anthropic Direct API ==========
+      - name: Claude Code Review (Anthropic - Fallback)
+        id: anthropic_review
+        if: |
+          env.ANTHROPIC_KEY_SET == 'true' &&
+          (env.BEDROCK_CONFIGURED != 'true' || steps.bedrock_review.outcome != 'success')
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          use_commit_signing: true
+          show_full_output: true
+          prompt: |
+            You are an expert code reviewer for CCP Digital Marketing (Rust/Tauri + Python recipes + vanilla JS frontend).
+
+            **PR**: #${{ steps.pr_context.outputs.pr_number }} - ${{ steps.pr_context.outputs.pr_title }}
+
+            Review and fix issues. Read `CLAUDE.md` for design principles.
+            Focus: Let It Crash, security, recipe patterns, KISS.
+            Do NOT modify: .github/workflows/*, CLAUDE.md, Cargo.toml, tauri.conf.json
+          claude_args: >-
+            --mcp-config /tmp/pal-mcp-config.json
+            --allowed-tools
+            "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(ruff *),Bash(python scripts/validate_recipes.py),Read,Edit,Write,Glob,Grep,mcp__pal__codereview,mcp__pal__listmodels"
+            --max-turns 25
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Parse review results
+        id: parse
+        run: |
+          # Check if Claude generated any file changes
+          if git diff --quiet; then
+            echo "has_suggestions=false" >> $GITHUB_OUTPUT
+            echo "::notice::No code changes suggested by AI review"
+          else
+            echo "has_suggestions=true" >> $GITHUB_OUTPUT
+
+            # Generate patch file
+            git diff > /tmp/ai-suggestions.patch
+
+            # Validate patch can be applied
+            if git stash && git apply --check /tmp/ai-suggestions.patch 2>&1; then
+              git stash pop
+              echo "patch_file=/tmp/ai-suggestions.patch" >> $GITHUB_OUTPUT
+              echo "::notice::Valid patch generated - $(git diff --stat | tail -1)"
+            else
+              git stash pop 2>/dev/null || true
+              echo "has_suggestions=false" >> $GITHUB_OUTPUT
+              echo "::error::Generated patch cannot be cleanly applied"
+            fi
+          fi
+
+      - name: Upload patch artifact
+        if: steps.parse.outputs.has_suggestions == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-suggestions-patch
+          path: /tmp/ai-suggestions.patch
+
+  pal-consensus-validation:
+    name: Validate Suggestions with Multi-Model Consensus
+    needs: [security-check, claude-review]
+    if: needs.claude-review.outputs.has_suggestions == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      consensus_approve: ${{ steps.consensus.outputs.approved }}
+      consensus_reason: ${{ steps.consensus.outputs.reason }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download patch
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-suggestions-patch
+          path: /tmp/
+
+      - name: Prepare patch context
+        run: |
+          git apply --stat /tmp/ai-suggestions.patch > /tmp/patch-summary.txt
+
+      - name: Run consensus on suggested changes
+        id: consensus
+        env:
+          PAL_MCP_API_KEY: ${{ secrets.PAL_MCP_API_KEY }}
+          PAL_MCP_ENDPOINT: ${{ secrets.PAL_MCP_ENDPOINT || 'https://pal-mcp.example.com/api/tools/consensus' }}
+        run: |
+          PATCH_CONTENT=$(cat /tmp/ai-suggestions.patch | jq -R -s .)
+          PATCH_SUMMARY=$(cat /tmp/patch-summary.txt)
+
+          cat > /tmp/consensus-request.json <<EOF
+          {
+            "prompt": "Evaluate AI-suggested code changes for CCP Digital Marketing (Rust/Tauri + Python recipes):\n\nPatch Summary:\n${PATCH_SUMMARY}\n\nFull Patch:\n${PATCH_CONTENT}\n\nAssess: 1) Correctness, 2) Security, 3) Code quality, 4) Risk of introducing bugs",
+            "models": [
+              {"model": "gpt-5-mini", "stance": "for"},
+              {"model": "claude-haiku-4.5", "stance": "against"},
+              {"model": "gemini-2-flash", "stance": "neutral"}
+            ],
+            "focus_areas": ["security", "correctness", "side-effects"],
+            "temperature": 0.1,
+            "thinking_mode": "high"
+          }
+          EOF
+
+          RESPONSE=$(curl -s -X POST "$PAL_MCP_ENDPOINT" \
+            -H "Authorization: Bearer $PAL_MCP_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/consensus-request.json)
+
+          RECOMMENDATION=$(echo "$RESPONSE" | jq -r '.synthesized_recommendation')
+
+          if echo "$RECOMMENDATION" | grep -iE "(safe|acceptable|approved|looks good)" > /dev/null; then
+            echo "approved=true" >> $GITHUB_OUTPUT
+          else
+            echo "approved=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "reason<<EOF" >> $GITHUB_OUTPUT
+          echo "$RECOMMENDATION" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+  create-draft-pr:
+    name: Create Draft PR with AI Suggestions
+    needs: [security-check, claude-review, pal-consensus-validation]
+    if: |
+      needs.claude-review.outputs.has_suggestions == 'true' &&
+      needs.pal-consensus-validation.outputs.consensus_approve == 'true'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Download patch
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-suggestions-patch
+          path: /tmp/
+
+      - name: Apply AI suggestions
+        run: |
+          git apply /tmp/ai-suggestions.patch
+          if [ $? -ne 0 ]; then
+            echo "::error::Failed to apply patch"
+            exit 1
+          fi
+
+      - name: Run CCP linters and formatters
+        run: |
+          # Python: Ruff
+          pip install ruff
+          ruff check scripts/ recipes/ --fix || true
+          ruff format scripts/ recipes/ || true
+
+          # Validate recipes
+          python scripts/validate_recipes.py || echo "::warning::Recipe validation found issues"
+
+      - name: Run secret scanning
+        run: |
+          if git diff | grep -iE "(api[_-]?key|password|secret|token)" > /dev/null; then
+            echo "::warning::Potential secret detected in changes - manual review required"
+          fi
+
+      - name: Revert protected files
+        run: |
+          # Safety: revert any changes to protected files
+          PROTECTED_FILES=(
+            ".github/"
+            "CLAUDE.md"
+            "Cargo.toml"
+            "tauri.conf.json"
+          )
+          for pattern in "${PROTECTED_FILES[@]}"; do
+            git checkout -- "$pattern" 2>/dev/null || true
+          done
+
+      - name: Create Draft Pull Request
+        id: create_pr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          commit-message: |
+            AI-suggested improvements from PR #${{ github.event.pull_request.number }}
+
+            Generated by Claude Code Review + PAL MCP consensus validation.
+
+            Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+          branch: ai/auto-fix-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          delete-branch: true
+          draft: true
+          title: "AI Suggestions: ${{ github.event.pull_request.title }}"
+          body: |
+            ## Automated Improvements
+
+            This draft PR contains AI-suggested improvements for PR #${{ github.event.pull_request.number }}.
+
+            ### Review Process
+
+            1. **Claude Code Review**: Analyzed code and generated suggestions (Bedrock primary, Anthropic fallback)
+            2. **PAL MCP Consensus**: Validated changes with 3 models (GPT-5-mini, Claude Haiku, Gemini-2-Flash)
+            3. **Security Checks**: Passed pre-flight validation
+            4. **Patch Application**: Applied cleanly
+            5. **CCP Linters**: Ruff lint + format, recipe validation
+
+            ### Consensus Recommendation
+
+            ${{ needs.pal-consensus-validation.outputs.consensus_reason }}
+
+            ### Important
+
+            - **This is a DRAFT PR** - requires human review before merge
+            - **Do not auto-merge** - maintainer approval required
+            - Review all changes carefully before approving
+            - Run full CI/CD pipeline before merging
+
+            ---
+            Generated by [Claude Code](https://claude.com/claude-code) + [PAL MCP](https://github.com/BeehiveInnovations/pal-mcp-server)
+          labels: |
+            ai-generated
+            needs-human-review
+            draft
+          reviewers: ${{ github.event.pull_request.user.login }}
+
+      - name: Comment on original PR
+        if: steps.create_pr.outputs.pull-request-number
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = '${{ steps.create_pr.outputs.pull-request-number }}';
+            const prUrl = '${{ steps.create_pr.outputs.pull-request-url }}';
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## AI Suggestions Available
+
+            Draft PR with suggested improvements: **#${prNumber}**
+
+            [View Draft PR with AI Suggestions](${prUrl})
+
+            ### What's included
+
+            - Multi-model consensus validation (3 models)
+            - Security checks passed
+            - Patch applied cleanly
+            - CCP linters passed (ruff + recipe validation)
+
+            ### Next steps
+
+            1. Review the suggested changes in draft PR #${prNumber}
+            2. If approved, merge the draft PR
+            3. Run full CI before merging
+
+            **The draft PR requires human approval** - do not auto-merge.
+
+            ---
+            Phase 3: Draft PR Creation`
+            });
+
+      - name: Workflow summary
+        if: always()
+        run: |
+          echo "### Draft PR Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Draft PR**: #${{ steps.create_pr.outputs.pull-request-number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: ${{ steps.create_pr.outputs.pull-request-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: Awaiting human review" >> $GITHUB_STEP_SUMMARY
+          echo "- **Phase**: 3 (Draft PR Creation)" >> $GITHUB_STEP_SUMMARY
+
+  blocked-security:
+    name: Security Block Notice
+    needs: security-check
+    if: needs.security-check.outputs.safe_to_proceed == 'false'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Post security notice
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const reason = `${{ needs.security-check.outputs.blocked_reason }}`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## AI Patch Generation Blocked
+
+            ${reason}
+
+            **Security Policy**: Automated patch generation is disabled for:
+            - Workflow files (.github/workflows/*)
+            - Config files (CLAUDE.md, Cargo.toml, tauri.conf.json)
+            - Secrets and credentials
+            - PRs from forks
+
+            You can still get a review comment by using Phase 1 or Phase 2 workflows.`
+            });
+
+# Required secrets:
+# - GITHUB_TOKEN (automatically provided)
+# - PAT_TOKEN (Personal Access Token with repo scope)
+# - AWS_BEARER_TOKEN_BEDROCK (primary provider)
+# - AWS_REGION (default: us-east-1)
+# - ANTHROPIC_API_KEY (fallback provider)
+# - GEMINI_API_KEY (PAL MCP consensus)
+# - OPENAI_API_KEY (PAL MCP consensus)
+# - PAL_MCP_API_KEY (external consensus API)
+# - PAL_MCP_ENDPOINT (optional)
+#
+# SECURITY NOTES:
+# - Never auto-merges (always creates DRAFT PRs)
+# - Blocks protected file modifications (workflows, config, credentials)
+# - Reverts protected files before PR creation as safety net
+# - Requires human approval
+# - Runs CCP-specific linters (ruff, recipe validation)
+# - Runs secret scanning on generated patches

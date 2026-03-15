@@ -10,8 +10,6 @@ pub struct AppConfig {
     pub drafts_dir: String,
     pub discord_channel_id: String,
     pub facebook_page_id: String,
-    pub meetup_group_url: String,
-    pub browser_provider: String,
 }
 
 impl AppConfig {
@@ -46,10 +44,6 @@ impl AppConfig {
             }),
             discord_channel_id: env::var("CCP_DISCORD_CHANNEL_ID").unwrap_or_default(),
             facebook_page_id: env::var("CCP_FACEBOOK_PAGE_ID").unwrap_or_default(),
-            meetup_group_url: env::var("CCP_MEETUP_GROUP_URL")
-                .unwrap_or_else(|_| "https://www.meetup.com/code-coffee-philly".to_string()),
-            browser_provider: env::var("CCP_BROWSER_PROVIDER")
-                .unwrap_or_else(|_| "hyperbrowser".to_string()),
         }
     }
 }
@@ -63,5 +57,3 @@ pub fn recipe_ids() -> HashMap<&'static str, &'static str> {
         ("social_post", "rcp_3LheyoNQpiFK"),
     ])
 }
-
-pub const EVENT_PLATFORMS: [&str; 3] = ["luma", "meetup", "partiful"];

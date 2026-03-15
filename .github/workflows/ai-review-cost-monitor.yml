@@ -1,0 +1,270 @@
+name: AI Review Cost Monitor
+
+# Monitors AI review costs and alerts when budgets are exceeded
+# Runs every 6 hours to track spend across all phases
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:  # Manual trigger
+  workflow_run:
+    workflows: ["Claude Review - Phase 1", "Claude Review - Phase 2", "Claude Review - Phase 3"]
+    types: [completed]
+
+jobs:
+  track-usage:
+    name: Track AI Review Usage
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Query workflow runs
+        id: usage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get workflow runs from last 24 hours
+          SINCE=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+
+          # Count runs per phase
+          PHASE1_RUNS=$(gh run list --workflow=claude-review-phase1.yml --created ">=$SINCE" --json conclusion --jq '[.[] | select(.conclusion=="success")] | length')
+          PHASE2_RUNS=$(gh run list --workflow=claude-review-phase2.yml --created ">=$SINCE" --json conclusion --jq '[.[] | select(.conclusion=="success")] | length')
+          PHASE3_RUNS=$(gh run list --workflow=claude-review-phase3.yml --created ">=$SINCE" --json conclusion --jq '[.[] | select(.conclusion=="success")] | length')
+
+          echo "phase1_runs=$PHASE1_RUNS" >> $GITHUB_OUTPUT
+          echo "phase2_runs=$PHASE2_RUNS" >> $GITHUB_OUTPUT
+          echo "phase3_runs=$PHASE3_RUNS" >> $GITHUB_OUTPUT
+
+      - name: Calculate costs
+        id: costs
+        run: |
+          # Cost estimates (USD)
+          PHASE1_COST=1.50
+          PHASE2_COST=3.50  # Average between normal ($1.50) and consensus ($5)
+          PHASE3_COST=6.00  # Average
+
+          PHASE1_RUNS=${{ steps.usage.outputs.phase1_runs }}
+          PHASE2_RUNS=${{ steps.usage.outputs.phase2_runs }}
+          PHASE3_RUNS=${{ steps.usage.outputs.phase3_runs }}
+
+          DAILY_PHASE1=$(echo "$PHASE1_RUNS * $PHASE1_COST" | bc)
+          DAILY_PHASE2=$(echo "$PHASE2_RUNS * $PHASE2_COST" | bc)
+          DAILY_PHASE3=$(echo "$PHASE3_RUNS * $PHASE3_COST" | bc)
+
+          DAILY_TOTAL=$(echo "$DAILY_PHASE1 + $DAILY_PHASE2 + $DAILY_PHASE3" | bc)
+          MONTHLY_PROJECTED=$(echo "$DAILY_TOTAL * 30" | bc)
+
+          echo "daily_total=$DAILY_TOTAL" >> $GITHUB_OUTPUT
+          echo "monthly_projected=$MONTHLY_PROJECTED" >> $GITHUB_OUTPUT
+
+          echo "phase1_cost=$DAILY_PHASE1" >> $GITHUB_OUTPUT
+          echo "phase2_cost=$DAILY_PHASE2" >> $GITHUB_OUTPUT
+          echo "phase3_cost=$DAILY_PHASE3" >> $GITHUB_OUTPUT
+
+      - name: Check budget limits
+        id: budget
+        env:
+          DAILY_BUDGET: 50      # $50/day limit
+          MONTHLY_BUDGET: 1000  # $1000/month limit
+        run: |
+          DAILY_TOTAL=${{ steps.costs.outputs.daily_total }}
+          MONTHLY_PROJECTED=${{ steps.costs.outputs.monthly_projected }}
+
+          DAILY_LIMIT=$DAILY_BUDGET
+          MONTHLY_LIMIT=$MONTHLY_BUDGET
+
+          DAILY_EXCEEDED="false"
+          MONTHLY_EXCEEDED="false"
+
+          # Check daily limit
+          if (( $(echo "$DAILY_TOTAL > $DAILY_LIMIT" | bc -l) )); then
+            DAILY_EXCEEDED="true"
+            echo "::error::Daily spend (\$$DAILY_TOTAL) exceeds limit (\$$DAILY_LIMIT)"
+          fi
+
+          # Check monthly projection
+          if (( $(echo "$MONTHLY_PROJECTED > $MONTHLY_LIMIT" | bc -l) )); then
+            MONTHLY_EXCEEDED="true"
+            echo "::warning::Projected monthly spend (\$$MONTHLY_PROJECTED) exceeds budget (\$$MONTHLY_LIMIT)"
+          fi
+
+          echo "daily_exceeded=$DAILY_EXCEEDED" >> $GITHUB_OUTPUT
+          echo "monthly_exceeded=$MONTHLY_EXCEEDED" >> $GITHUB_OUTPUT
+
+      - name: Generate cost report
+        run: |
+          cat > /tmp/cost-report.md <<EOF
+          # 💰 AI Review Cost Report
+
+          **Report Date**: $(date -u +"%Y-%m-%d %H:%M UTC")
+
+          ## Daily Usage (Last 24 Hours)
+
+          | Phase | Runs | Cost/Run | Total Cost |
+          |-------|------|----------|------------|
+          | Phase 1 (Comment Only) | ${{ steps.usage.outputs.phase1_runs }} | \$1.50 | \$${{ steps.costs.outputs.phase1_cost }} |
+          | Phase 2 (Selective Consensus) | ${{ steps.usage.outputs.phase2_runs }} | \$3.50 avg | \$${{ steps.costs.outputs.phase2_cost }} |
+          | Phase 3 (Draft PR Creation) | ${{ steps.usage.outputs.phase3_runs }} | \$6.00 avg | \$${{ steps.costs.outputs.phase3_cost }} |
+          | **Total** | **$((${{ steps.usage.outputs.phase1_runs }} + ${{ steps.usage.outputs.phase2_runs }} + ${{ steps.usage.outputs.phase3_runs }}))** | - | **\$${{ steps.costs.outputs.daily_total }}** |
+
+          ## Monthly Projection
+
+          - **Current daily average**: \$${{ steps.costs.outputs.daily_total }}
+          - **Projected monthly**: \$${{ steps.costs.outputs.monthly_projected }}
+          - **Monthly budget**: \$1000
+
+          ## Budget Status
+
+          - Daily limit: $(if [ "${{ steps.budget.outputs.daily_exceeded }}" == "true" ]; then echo "🔴 EXCEEDED"; else echo "✅ Within limit"; fi)
+          - Monthly projection: $(if [ "${{ steps.budget.outputs.monthly_exceeded }}" == "true" ]; then echo "⚠️ OVER BUDGET"; else echo "✅ Within budget"; fi)
+
+          ## Cost Optimization Tips
+
+          $(if [ "${{ steps.budget.outputs.monthly_exceeded }}" == "true" ]; then
+            echo "Your projected monthly spend exceeds budget. Consider:"
+            echo "1. Use cheaper models (gpt-5-mini, claude-haiku, gemini-2-flash)"
+            echo "2. Enable stricter size limits (max 500 lines instead of 1000)"
+            echo "3. Use label-based triggering instead of automatic"
+            echo "4. Reduce Phase 3 usage (most expensive)"
+          else
+            echo "✅ Spend is within budget. No action needed."
+          fi)
+
+          ## Cost Breakdown by Model
+
+          Estimated token usage per review:
+          - Claude Opus 4.5: ~50K tokens @ \$0.015/1K = \$0.75
+          - GPT-5-mini: ~30K tokens @ \$0.10/1M = \$0.003
+          - Claude Haiku 4.5: ~30K tokens @ \$0.25/1M = \$0.0075
+          - Gemini-2-Flash: ~30K tokens @ \$0.15/1M = \$0.0045
+
+          ---
+          *Costs are estimates based on average token usage. Actual costs may vary.*
+          EOF
+
+          cat /tmp/cost-report.md
+
+      - name: Update workflow summary
+        run: |
+          cat /tmp/cost-report.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Create budget alert issue
+        if: steps.budget.outputs.daily_exceeded == 'true' || steps.budget.outputs.monthly_exceeded == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('/tmp/cost-report.md', 'utf8');
+
+            // Check if alert issue already exists
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'ai-review-budget-alert'
+            });
+
+            if (issues.data.length === 0) {
+              // Create new alert issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '🚨 AI Review Budget Alert: Cost Limit Exceeded',
+                body: `${report}\n\n## Action Required\n\nAI review costs have exceeded configured limits. Please review the cost report above and take action:\n\n1. Review workflow configurations\n2. Implement cost controls\n3. Consider downgrading to lower-cost phases\n4. Update budget limits if needed\n\n---\nThis issue will auto-close when costs return to normal.`,
+                labels: ['ai-review-budget-alert', 'cost-management', 'needs-attention']
+              });
+            } else {
+              // Update existing issue with latest report
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body: `## Updated Cost Report\n\n${report}`
+              });
+            }
+
+      - name: Close budget alert if resolved
+        if: steps.budget.outputs.daily_exceeded == 'false' && steps.budget.outputs.monthly_exceeded == 'false'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Find open budget alert issues
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'ai-review-budget-alert'
+            });
+
+            // Close them with a comment
+            for (const issue of issues.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: '✅ **Budget Alert Resolved**\n\nAI review costs have returned to within configured limits. Closing this alert.\n\nCurrent status:\n- Daily spend: Within limit\n- Monthly projection: Within budget'
+              });
+
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed'
+              });
+            }
+
+      - name: Create issue on workflow failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 AI Review Cost Monitor Failed',
+              labels: ['automated-alert', 'cost-monitor-failure', 'bug'],
+              body: `## Workflow Failure Alert
+
+            The AI Review Cost Monitor workflow failed during execution.
+
+            **Run ID**: ${context.runId}
+            **Triggered by**: ${context.eventName}
+            **Timestamp**: ${new Date().toISOString()}
+
+            ### Possible Causes
+
+            1. GitHub API rate limits exceeded
+            2. Workflow query permissions issue
+            3. Cost calculation errors
+            4. Budget check script failure
+
+            ### Action Required
+
+            1. Review the [workflow logs](${runUrl}) for error details
+            2. Check GitHub API rate limit status
+            3. Verify workflow has necessary permissions
+            4. Investigate any script errors in cost calculations
+
+            ### View Full Logs
+
+            [Click here to view workflow run](${runUrl})
+
+            ---
+            *This issue was automatically created by the AI Review Cost Monitor workflow.*`
+            });
+
+            console.log('Created failure tracking issue');
+
+# Configuration:
+# Update DAILY_BUDGET and MONTHLY_BUDGET in the "Check budget limits" step
+# Default: $50/day, $1000/month

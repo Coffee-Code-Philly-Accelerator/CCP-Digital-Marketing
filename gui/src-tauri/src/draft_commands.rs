@@ -6,7 +6,9 @@
 //!
 //! Draft publishing calls individual social platform APIs via v3 session.
 
-use crate::composio::{extract_data, extract_json_from_text, extract_llm_content, ComposioClient};
+use crate::composio::{
+    extract_data, extract_image_url, extract_json_from_text, extract_llm_content, ComposioClient,
+};
 use crate::draft::{
     self, build_draft, load_draft, save_draft, set_draft_status, set_publish_results,
     validate_draft_for_publish, validate_draft_path, Draft, DraftCopies, DraftEvent,
@@ -48,17 +50,7 @@ async fn generate_image(
         .await;
 
     match result {
-        Ok(val) => {
-            let data = extract_data(&val);
-            // v3: data.image.s3url; recipe/v1: data.publicUrl
-            data.get("image")
-                .and_then(|img| img.get("s3url").or_else(|| img.get("publicUrl")))
-                .or_else(|| data.get("publicUrl"))
-                .or_else(|| data.get("s3url"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string()
-        }
+        Ok(val) => extract_image_url(&val),
         Err(e) => {
             emit_progress(
                 app,
@@ -107,8 +99,8 @@ async fn generate_copies(
         )
         .await?;
 
-    let content = extract_llm_content(&result)
-        .ok_or_else(|| "LLM returned no content".to_string())?;
+    let content =
+        extract_llm_content(&result).ok_or_else(|| "LLM returned no content".to_string())?;
 
     let copies = extract_json_from_text(&content)
         .ok_or_else(|| format!("Failed to parse JSON from LLM response: {}", content))?;
@@ -176,11 +168,27 @@ fn copies_from_json(val: &Value) -> DraftCopies {
 // Social platform posting helpers (for publish_draft)
 // ============================================================================
 
-async fn post_to_linkedin(
-    client: &ComposioClient,
-    app: &AppHandle,
-    draft: &Draft,
-) -> String {
+/// Append a URL to text with double newline separator, or return text as-is.
+fn with_url(text: &str, url: &str) -> String {
+    if url.is_empty() {
+        text.to_string()
+    } else {
+        format!("{}\n\n{}", text, url)
+    }
+}
+
+/// Extract a string or numeric ID from a JSON value.
+fn value_as_string_id(data: &Value, key: &str) -> String {
+    data.get(key)
+        .and_then(|v| match v {
+            Value::String(s) => Some(s.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+async fn post_to_linkedin(client: &ComposioClient, app: &AppHandle, draft: &Draft) -> String {
     let profile_result = client
         .execute_tool(
             "LINKEDIN_GET_MY_INFO",
@@ -210,10 +218,7 @@ async fn post_to_linkedin(
         format!("urn:li:person:{}", li_id)
     };
 
-    let mut text = draft.copies.linkedin.clone();
-    if !draft.event.url.is_empty() {
-        text = format!("{}\n\n{}", text, draft.event.url);
-    }
+    let text = with_url(&draft.copies.linkedin, &draft.event.url);
 
     let post_result = client
         .execute_tool(
@@ -235,11 +240,7 @@ async fn post_to_linkedin(
     }
 }
 
-async fn post_to_instagram(
-    client: &ComposioClient,
-    app: &AppHandle,
-    draft: &Draft,
-) -> String {
+async fn post_to_instagram(client: &ComposioClient, app: &AppHandle, draft: &Draft) -> String {
     if draft.image_url.is_empty() {
         return "skipped: no image available".to_string();
     }
@@ -259,14 +260,7 @@ async fn post_to_instagram(
         Err(e) => return format!("failed: {}", e),
     };
 
-    let ig_user_id = user_data
-        .get("id")
-        .and_then(|v| match v {
-            Value::String(s) => Some(s.clone()),
-            Value::Number(n) => Some(n.to_string()),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let ig_user_id = value_as_string_id(&user_data, "id");
     if ig_user_id.is_empty() {
         return "failed: could not determine user ID".to_string();
     }
@@ -290,14 +284,7 @@ async fn post_to_instagram(
         Err(e) => return format!("failed: container creation - {}", e),
     };
 
-    let creation_id = container_data
-        .get("id")
-        .and_then(|v| match v {
-            Value::String(s) => Some(s.clone()),
-            Value::Number(n) => Some(n.to_string()),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let creation_id = value_as_string_id(&container_data, "id");
     if creation_id.is_empty() {
         return "failed: no container ID returned".to_string();
     }
@@ -333,10 +320,7 @@ async fn post_to_facebook(
         return "skipped: no page ID configured".to_string();
     }
 
-    let mut message = draft.copies.facebook.clone();
-    if !draft.event.url.is_empty() {
-        message = format!("{}\n\n{}", message, draft.event.url);
-    }
+    let message = with_url(&draft.copies.facebook, &draft.event.url);
 
     let result = client
         .execute_tool(
@@ -367,10 +351,7 @@ async fn post_to_discord(
         return "skipped: no channel ID configured".to_string();
     }
 
-    let mut content = draft.copies.discord.clone();
-    if !draft.event.url.is_empty() {
-        content = format!("{}\n\n{}", content, draft.event.url);
-    }
+    let content = with_url(&draft.copies.discord, &draft.event.url);
 
     let result = client
         .execute_tool(
@@ -396,6 +377,7 @@ async fn post_to_discord(
 // ============================================================================
 
 /// Generate social media drafts for event promotion without posting.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn generate_drafts(
     client: tauri::State<'_, ComposioClient>,
@@ -414,11 +396,8 @@ pub async fn generate_drafts(
     let facebook = facebook_page_id.unwrap_or_else(|| client.config.facebook_page_id.clone());
     let skip = skip_platforms.unwrap_or_default();
 
-    // Step 1: Generate promotional image
-    let image_url = generate_image(&client, &app, &title, "generate_drafts").await;
-
-    // Step 2: Generate platform-specific copies
-    let prompt = format!(
+    // Build copy prompt before parallel section
+    let copy_prompt = format!(
         "Generate 5 platform-specific social media posts to promote this event:\n\n\
          Title: {}\nDate: {}\nTime: {}\nLocation: {}\nDescription: {}\nEvent URL: {}\n\n\
          Return ONLY a JSON object with keys: twitter, linkedin, instagram, facebook, discord\n\n\
@@ -431,7 +410,13 @@ pub async fn generate_drafts(
         title, date, time, location, description, event_url
     );
 
-    let copies_val = match generate_copies(&client, &app, &prompt, "generate_drafts").await {
+    // Run image generation and copy generation in parallel
+    let (image_url, copies_result) = tokio::join!(
+        generate_image(&client, &app, &title, "generate_drafts"),
+        generate_copies(&client, &app, &copy_prompt, "generate_drafts"),
+    );
+
+    let copies_val = match copies_result {
         Ok(val) => val,
         Err(e) => {
             emit_progress(
@@ -449,7 +434,7 @@ pub async fn generate_drafts(
         }
     };
 
-    // Step 3: Build and save draft
+    // Build and save draft
     let event = DraftEvent {
         title,
         date,
@@ -465,7 +450,13 @@ pub async fn generate_drafts(
         skip_platforms: skip,
     };
 
-    let draft_obj = build_draft("event_promotion", &event, &copies, &image_url, &platform_config);
+    let draft_obj = build_draft(
+        "event_promotion",
+        &event,
+        &copies,
+        &image_url,
+        &platform_config,
+    );
     let filepath = save_draft(&client.config.drafts_dir, &draft_obj)?;
 
     Ok(json!({
@@ -477,9 +468,7 @@ pub async fn generate_drafts(
 
 /// List all drafts.
 #[tauri::command]
-pub async fn list_drafts_cmd(
-    client: tauri::State<'_, ComposioClient>,
-) -> Result<Value, String> {
+pub async fn list_drafts_cmd(client: tauri::State<'_, ComposioClient>) -> Result<Value, String> {
     let drafts = draft::list_drafts(&client.config.drafts_dir)?;
     serde_json::to_value(drafts).map_err(|e| format!("Serialization error: {}", e))
 }
@@ -531,11 +520,11 @@ pub async fn publish_draft(
         return Err(format!("Draft validation failed: {}", error));
     }
 
-    let skip_platforms: Vec<String> = draft
+    let skip: Vec<&str> = draft
         .platform_config
         .skip_platforms
         .split(',')
-        .map(|s| s.trim().to_lowercase())
+        .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -550,37 +539,56 @@ pub async fn publish_draft(
         &draft.platform_config.facebook_page_id
     };
 
+    // Post to all platforms in parallel
+    let (linkedin_result, instagram_result, facebook_result, discord_result) = tokio::join!(
+        async {
+            if skip.contains(&"linkedin") {
+                "skipped".to_string()
+            } else {
+                post_to_linkedin(&client, &app, &draft).await
+            }
+        },
+        async {
+            if skip.contains(&"instagram") {
+                "skipped".to_string()
+            } else {
+                post_to_instagram(&client, &app, &draft).await
+            }
+        },
+        async {
+            if skip.contains(&"facebook") {
+                "skipped".to_string()
+            } else {
+                post_to_facebook(&client, &app, &draft, facebook_id).await
+            }
+        },
+        async {
+            if skip.contains(&"discord") {
+                "skipped".to_string()
+            } else {
+                post_to_discord(&client, &app, &draft, discord_id).await
+            }
+        },
+    );
+
     let mut results = json!({
         "twitter_posted": "skipped: connection not available",
-        "linkedin_posted": "skipped",
-        "instagram_posted": "skipped",
-        "facebook_posted": "skipped",
-        "discord_posted": "skipped",
+        "linkedin_posted": linkedin_result,
+        "instagram_posted": instagram_result,
+        "facebook_posted": facebook_result,
+        "discord_posted": discord_result,
         "image_url": draft.image_url,
     });
 
-    // Post to each platform sequentially
-    if !skip_platforms.contains(&"linkedin".to_string()) {
-        results["linkedin_posted"] = json!(post_to_linkedin(&client, &app, &draft).await);
-    }
-
-    if !skip_platforms.contains(&"instagram".to_string()) {
-        results["instagram_posted"] = json!(post_to_instagram(&client, &app, &draft).await);
-    }
-
-    if !skip_platforms.contains(&"facebook".to_string()) {
-        results["facebook_posted"] = json!(post_to_facebook(&client, &app, &draft, facebook_id).await);
-    }
-
-    if !skip_platforms.contains(&"discord".to_string()) {
-        results["discord_posted"] = json!(post_to_discord(&client, &app, &draft, discord_id).await);
-    }
-
-    // Count successes
-    let success_count = ["twitter_posted", "linkedin_posted", "instagram_posted", "facebook_posted", "discord_posted"]
-        .iter()
-        .filter(|k| results[**k].as_str() == Some("success"))
-        .count();
+    let success_count = [
+        &linkedin_result,
+        &instagram_result,
+        &facebook_result,
+        &discord_result,
+    ]
+    .iter()
+    .filter(|s| s.as_str() == "success")
+    .count();
     results["summary"] = json!(format!("Posted to {}/5 platforms", success_count));
 
     let new_status = if success_count > 0 {
@@ -600,6 +608,7 @@ pub async fn publish_draft(
 }
 
 /// Generate a social post draft from a free-form chat message.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn chat_generate_draft(
     client: tauri::State<'_, ComposioClient>,
@@ -626,65 +635,26 @@ pub async fn chat_generate_draft(
     let url_str = url.as_deref().unwrap_or("");
     let tone_str = tone.as_deref().unwrap_or("engaging");
 
-    // Step 1: Generate image (use provided URL/prompt, or generate from topic)
-    let result_image_url = if let Some(ref provided) = image_url {
-        if !provided.is_empty() {
-            provided.clone()
-        } else {
-            generate_image(&client, &app, &message, "chat_generate_draft").await
-        }
-    } else if let Some(ref prompt) = image_prompt {
-        if !prompt.is_empty() {
-            // Use custom image prompt
-            let img_result = client
-                .execute_tool(
-                    "GEMINI_GENERATE_IMAGE",
-                    &json!({
-                        "prompt": prompt,
-                        "model": "gemini-2.5-flash-image"
-                    }),
-                    &app,
-                    "chat_generate_draft",
-                    "image_generation",
-                )
-                .await;
-            match img_result {
-                Ok(val) => {
-                    let data = extract_data(&val);
-                    data.get("publicUrl")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string()
-                }
-                Err(_) => String::new(),
-            }
-        } else {
-            generate_image(&client, &app, &message, "chat_generate_draft").await
-        }
-    } else {
-        generate_image(&client, &app, &message, "chat_generate_draft").await
-    };
-
-    // Step 2: Generate platform-specific copies
-    let mut prompt = format!(
+    // Build copy prompt before parallel section
+    let mut copy_prompt = format!(
         "Generate 5 platform-specific social media posts about this topic:\n\n\
          Topic: {}\nContent: {}\n",
         message, message
     );
     if !url_str.is_empty() {
-        prompt.push_str(&format!("Link: {}\n", url_str));
+        copy_prompt.push_str(&format!("Link: {}\n", url_str));
     }
     if let Some(ref c) = cta {
         if !c.is_empty() {
-            prompt.push_str(&format!("Call to action: {}\n", c));
+            copy_prompt.push_str(&format!("Call to action: {}\n", c));
         }
     }
     if let Some(ref h) = hashtags {
         if !h.is_empty() {
-            prompt.push_str(&format!("Hashtags to include: {}\n", h));
+            copy_prompt.push_str(&format!("Hashtags to include: {}\n", h));
         }
     }
-    prompt.push_str(&format!(
+    copy_prompt.push_str(&format!(
         "Tone: {}\n\n\
          Return ONLY a JSON object with keys: twitter, linkedin, instagram, facebook, discord\n\n\
          Guidelines:\n\
@@ -698,29 +668,58 @@ pub async fn chat_generate_draft(
         tone_str
     ));
 
-    let copies_val =
-        match generate_copies(&client, &app, &prompt, "chat_generate_draft").await {
-            Ok(val) => val,
-            Err(e) => {
-                emit_progress(
-                    &app,
-                    RecipeProgressEvent {
-                        command: "chat_generate_draft".to_string(),
-                        phase: "copy_generation".to_string(),
-                        status: "warning".to_string(),
-                        elapsed_sec: 0,
-                        message: format!(
-                            "LLM copy generation failed, using defaults: {}",
-                            e
-                        ),
-                        result: None,
-                    },
-                );
-                default_copies(&message, &message, url_str)
+    // Resolve image: use provided URL, custom prompt, or auto-generate
+    let image_future = async {
+        if let Some(ref provided) = image_url {
+            if !provided.is_empty() {
+                return provided.clone();
             }
-        };
+        }
+        if let Some(ref prompt) = image_prompt {
+            if !prompt.is_empty() {
+                let result = client
+                    .execute_tool(
+                        "GEMINI_GENERATE_IMAGE",
+                        &json!({ "prompt": prompt, "model": "gemini-2.5-flash-image" }),
+                        &app,
+                        "chat_generate_draft",
+                        "image_generation",
+                    )
+                    .await;
+                return match result {
+                    Ok(val) => extract_image_url(&val),
+                    Err(_) => String::new(),
+                };
+            }
+        }
+        generate_image(&client, &app, &message, "chat_generate_draft").await
+    };
 
-    // Step 3: Build and save draft
+    // Run image and copy generation in parallel
+    let (result_image_url, copies_result) = tokio::join!(
+        image_future,
+        generate_copies(&client, &app, &copy_prompt, "chat_generate_draft"),
+    );
+
+    let copies_val = match copies_result {
+        Ok(val) => val,
+        Err(e) => {
+            emit_progress(
+                &app,
+                RecipeProgressEvent {
+                    command: "chat_generate_draft".to_string(),
+                    phase: "copy_generation".to_string(),
+                    status: "warning".to_string(),
+                    elapsed_sec: 0,
+                    message: format!("LLM copy generation failed, using defaults: {}", e),
+                    result: None,
+                },
+            );
+            default_copies(&message, &message, url_str)
+        }
+    };
+
+    // Build and save draft
     let title: String = if message.chars().count() > 100 {
         let mut t: String = message.chars().take(97).collect();
         t.push_str("...");
