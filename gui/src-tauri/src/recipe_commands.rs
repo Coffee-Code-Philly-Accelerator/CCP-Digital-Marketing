@@ -13,6 +13,7 @@ use tauri::AppHandle;
 
 /// Create an event on Luma, Meetup, and Partiful.
 /// Requires Rube MCP browser automation — not available via v3 API.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn create_event(
     _client: tauri::State<'_, ComposioClient>,
@@ -36,6 +37,7 @@ pub async fn create_event(
 
 /// Promote an event on social media platforms.
 /// Use the draft workflow instead: generate_drafts -> approve -> publish.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn promote_event(
     _client: tauri::State<'_, ComposioClient>,
@@ -61,6 +63,7 @@ pub async fn promote_event(
 
 /// Post generic content to social media platforms.
 /// Use the draft workflow instead: chat_generate_draft -> approve -> publish.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn social_post(
     _client: tauri::State<'_, ComposioClient>,
@@ -87,6 +90,7 @@ pub async fn social_post(
 
 /// Full workflow: create events + promote on social media.
 /// Requires Rube MCP browser automation — not available via v3 API.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn full_workflow(
     _client: tauri::State<'_, ComposioClient>,

@@ -385,6 +385,7 @@ async fn post_to_discord(
 // ============================================================================
 
 /// Generate social media drafts for event promotion without posting.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn generate_drafts(
     client: tauri::State<'_, ComposioClient>,
@@ -606,6 +607,7 @@ pub async fn publish_draft(
 }
 
 /// Generate a social post draft from a free-form chat message.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn chat_generate_draft(
     client: tauri::State<'_, ComposioClient>,
