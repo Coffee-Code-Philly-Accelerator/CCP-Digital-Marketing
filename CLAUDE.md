@@ -327,31 +327,107 @@ Skills are defined in `.claude/skills/`. Each wraps a `RUBE_EXECUTE_RECIPE` call
 
 ---
 
-## CI/CD: Automated Code Review
+## Claude Code Commands
 
-GitHub Actions workflow (`.github/workflows/claude.yml`) provides two modes:
+Commands are defined in `.claude/commands/`. Each provides an interactive workflow invoked via `/command-name`.
 
-### Auto-Review (temporarily disabled)
+| Command | Description |
+|---------|-------------|
+| `/code-review` | Multi-model consensus code review via PAL MCP |
+| `/tdd` | Strict Red-Green-Refactor TDD workflow |
+| `/test-coverage` | Coverage gap analysis and test generation |
+| `/pr-check` | Run all 6 local CI checks with interactive fix loop |
+| `/pr` | Create branch, commit, push, create PR, fix failing checks |
+| `/push` | Push to origin remote with confirmation |
+| `/log-fix` | Query SQLite telemetry DB, triage failures, interactive bug fixing |
+| `/evaluate` | Recipe validation and design principle compliance checks |
+| `/docs-update` | Review and update CLAUDE.md against recent git changes |
+| `/deep-research` | Web search + multi-model consensus research reports |
+| `/team-plan` | Decompose tasks into agent workstreams with PAL MCP consensus |
 
-Currently disabled (`if: false` in workflow) to unblock PR merges. When re-enabled, triggers on `pull_request: [opened, synchronize, ready_for_review]`. Claude reviews the diff against this file's design principles — Let It Crash, KISS, Pure Functions, SOLID, and recipe patterns. Posts review comments but makes no code changes.
+## Claude Code Rules
 
-### Interactive @claude (on comment)
+Rules in `.claude/rules/` are automatically loaded and provide persistent context:
 
-Triggers when a PR comment contains `@claude`. Claude can answer questions, explain code, and push fixes directly to the PR branch. Only triggers for non-bot users.
+| Rule | Purpose |
+|------|---------|
+| `architecture-reference.md` | Module reference, IPC commands, DB schema, file inventory |
+| `logging.md` | SQLite telemetry architecture, progress events, query examples |
 
-### Setup Requirements
+---
+
+## CI/CD Pipeline
+
+### Core CI (`.github/workflows/ci.yml`)
+
+Runs on push to `main` and all PRs. All jobs must pass for merge (enforced by `ci-pass` gate job).
+
+| Job | What it checks |
+|-----|---------------|
+| **Lint (Ruff)** | `ruff check scripts/ recipes/` |
+| **Format (Ruff)** | `ruff format --check scripts/ recipes/` |
+| **Recipe Validation** | `python scripts/validate_recipes.py` |
+| **Security Scan** | `bandit -r scripts/ recipes/ -ll` + `pip-audit` |
+| **Test** | `pytest tests/` across Python 3.10-3.13 matrix |
+| **Cargo Check** | `cargo clippy -- -D warnings` + `cargo fmt -- --check` (Tauri/Rust) |
+| **Design Principles** | Let It Crash compliance, KISS metrics, Pure Functions check |
+
+### AI Code Review (3-phase)
+
+| Phase | Workflow | Trigger | Purpose |
+|-------|----------|---------|---------|
+| Phase 1 | `claude-review-phase1.yml` | PR opened | Fast triage review |
+| Phase 2 | `claude-review-phase2.yml` | PR opened | Deep review with PAL MCP consensus |
+| Phase 3 | `claude-review-phase3.yml` | PR opened | Security-focused review with guardrails |
+| Interactive | `claude-interactive.yml` | `@claude` comment | Answer questions, push fixes to PR |
+
+All AI review workflows use **Bedrock (primary) + Anthropic API (fallback)** dual-provider pattern.
+
+### Autonomous Workflows
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `issue-to-pr.yml` | Issue labeled `claude-fix` | Auto-generate fix PR from issue description |
+| `nightly-code-review.yml` | Cron (4 AM UTC weekdays) | Scan recent changes, create improvement PRs |
+| `autonomous-code-scanner.yml` | Scheduled | Automated formatting + security scanning |
+| `nightly-docs-update.yml` | Scheduled | Keep CLAUDE.md in sync with code changes |
+
+All autonomous workflows create **draft PRs only** with `ai-generated` + `needs-human-review` labels.
+
+### Operational Workflows
+
+| Workflow | Purpose |
+|----------|---------|
+| `commit-notifications.yml` | Slack notifications for commits via Composio |
+| `release-notes.yml` | Auto-generate release notes |
+| `ai-issue-triage.yml` | AI-powered issue labeling and routing |
+| `ai-review-cost-monitor.yml` | Track AI review API costs |
+| `pal-consensus-review.yml` | Multi-model consensus on PRs |
+
+### Protected Paths
+
+Centralized in `.github/config/protected-paths.json`. Autonomous workflows revert changes to these paths:
+- `.github/workflows/*`, `.env*`, `recipes/`, `gui/src-tauri/src/`, `CLAUDE.md`, `Cargo.toml`, `tauri.conf.json`
+
+### Required Secrets
+
+| Secret | Purpose |
+|--------|---------|
+| `ANTHROPIC_API_KEY` | Claude Code API (fallback provider) |
+| `AWS_BEARER_TOKEN_BEDROCK` | AWS Bedrock (primary provider) |
+| `AWS_REGION` | Bedrock region (default: us-east-1) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code authentication for review workflows |
+| `PAT_TOKEN` | PR creation (repo + workflow scopes) |
+| `GEMINI_API_KEY` | PAL MCP consensus (Gemini model) |
+| `OPENAI_API_KEY` | PAL MCP consensus (GPT model) |
+| `RUBE_API_TOKEN` | Slack notifications via Composio |
+| `SLACK_CONNECTED_ACCOUNT_ID` | Slack account for notifications |
+
+### Setup
 
 1. Install the Claude GitHub App: `github.com/apps/claude`
-2. Add `ANTHROPIC_API_KEY` as a repository secret (Settings > Secrets and variables > Actions)
-
-### Cost Controls
-
-| Guard | Value |
-|-------|-------|
-| Auto-review max turns | 5 |
-| Interactive max turns | 10 |
-| Bot loop prevention | `sender.type != 'Bot'` check |
-| Fork PR secrets | Not exposed (GitHub default) |
+2. Configure secrets (run `.github/workflows/setup-claude-review.sh` for guided setup)
+3. See `.github/workflows/CLAUDE_REVIEW_SETUP.md` for detailed instructions
 
 ---
 

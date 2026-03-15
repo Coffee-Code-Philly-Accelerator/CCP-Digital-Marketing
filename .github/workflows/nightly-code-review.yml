@@ -1,0 +1,436 @@
+name: Nightly Code Review
+
+# Runs nightly to scan recent commits for code quality issues.
+# Creates a draft PR with fixes if issues are found.
+# Guardrails: protected-path reversion, 500 line diff gate, deduplication,
+# file type filter (\.py|\.rs|\.js|\.html).
+
+on:
+  schedule:
+    - cron: '0 4 * * 1-5'  # 4 AM UTC, weekdays only
+
+  workflow_dispatch:
+    inputs:
+      commits_to_scan:
+        description: 'Number of commits to analyze'
+        type: number
+        default: 20
+      dry_run:
+        description: 'Dry run (skip PR creation)'
+        type: boolean
+        default: false
+
+# Only one nightly review at a time
+concurrency:
+  group: nightly-code-review
+  cancel-in-progress: false
+
+jobs:
+  # ===========================================================================
+  # Pre-flight: gather context, check for recent changes
+  # ===========================================================================
+  preflight:
+    name: Pre-Flight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      has_changes: ${{ steps.check-changes.outputs.has_changes }}
+      changed_files: ${{ steps.check-changes.outputs.changed_files }}
+      protected_patterns: ${{ steps.load-config.outputs.protected_patterns }}
+      commits_to_scan: ${{ steps.params.outputs.commits }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve parameters
+        id: params
+        run: |
+          COMMITS="${{ inputs.commits_to_scan || '20' }}"
+          echo "commits=$COMMITS" >> $GITHUB_OUTPUT
+
+      - name: Validate required secrets
+        run: |
+          HAVE_BEDROCK="${{ secrets.AWS_BEARER_TOKEN_BEDROCK != '' }}"
+          HAVE_ANTHROPIC="${{ secrets.ANTHROPIC_API_KEY != '' }}"
+          if [ "$HAVE_BEDROCK" != "true" ] && [ "$HAVE_ANTHROPIC" != "true" ]; then
+            echo "::error::No API provider configured. Add AWS Bedrock credentials OR ANTHROPIC_API_KEY."
+            exit 1
+          fi
+          if [ -z "${{ secrets.PAT_TOKEN }}" ]; then
+            echo "::error::PAT_TOKEN required for PR creation"
+            exit 1
+          fi
+
+      - name: Load protected paths config
+        id: load-config
+        run: |
+          CONFIG=".github/config/protected-paths.json"
+          if [ -f "$CONFIG" ]; then
+            PATTERNS=$(python3 -c "
+          import json
+          cfg = json.load(open('$CONFIG'))
+          print(' '.join(cfg.get('protected_patterns', [])))
+          ")
+            echo "protected_patterns=$PATTERNS" >> $GITHUB_OUTPUT
+          else
+            echo "protected_patterns=.github/workflows/* .env* CLAUDE.md Cargo.toml tauri.conf.json" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for recent reviewable changes
+        id: check-changes
+        run: |
+          COMMITS="${{ steps.params.outputs.commits }}"
+
+          # Get files changed in recent commits, filtered to target extensions
+          CHANGED=$(git log --name-only --pretty=format: -"$COMMITS" \
+            | sort -u \
+            | grep -v '^$' \
+            | grep -E '\.(py|rs|js|html)$' \
+            || true)
+
+          if [ -z "$CHANGED" ]; then
+            echo "No reviewable files (\.py|\.rs|\.js|\.html) changed in last $COMMITS commits"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "changed_files=" >> $GITHUB_OUTPUT
+          else
+            COUNT=$(echo "$CHANGED" | wc -l | tr -d ' ')
+            echo "Found $COUNT reviewable files changed in last $COMMITS commits"
+            echo "$CHANGED"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            # Newline-separated list encoded for output
+            echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGED" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for duplicate nightly PRs
+        id: dedup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Check if there's already an open nightly-review PR from today
+          TODAY=$(date -u +%Y-%m-%d)
+          EXISTING=$(gh pr list \
+            --label "nightly-review" \
+            --state open \
+            --json createdAt,number \
+            -q ".[] | select(.createdAt | startswith(\"$TODAY\")) | .number" \
+            2>/dev/null || true)
+
+          if [ -n "$EXISTING" ]; then
+            echo "::notice::Nightly review PR #$EXISTING already exists for today ($TODAY). Skipping."
+            echo "duplicate=true" >> $GITHUB_OUTPUT
+          else
+            echo "duplicate=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ===========================================================================
+  # Main: Claude reviews and creates fixes
+  # ===========================================================================
+  review:
+    name: Nightly Review
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: needs.preflight.outputs.has_changes == 'true'
+    timeout-minutes: 45
+    env:
+      BEDROCK_CONFIGURED: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK != '' }}
+      ANTHROPIC_KEY_SET: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+      PROTECTED_PATTERNS: ${{ needs.preflight.outputs.protected_patterns }}
+      COMMITS_TO_SCAN: ${{ needs.preflight.outputs.commits_to_scan }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 0
+
+      - name: Create review branch
+        run: |
+          BRANCH="nightly-review/$(date -u +%Y-%m-%d)"
+          git checkout -b "$BRANCH"
+          git push -u origin "$BRANCH" 2>/dev/null || true
+          echo "REVIEW_BRANCH=$BRANCH" >> $GITHUB_ENV
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install validation tools
+        run: pip install ruff
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      # ========== PRIMARY: AWS Bedrock ==========
+      - name: Claude Review (Bedrock - Primary)
+        id: bedrock_review
+        if: env.BEDROCK_CONFIGURED == 'true'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ secrets.PAT_TOKEN }}
+          use_bedrock: "true"
+          show_full_output: true
+          prompt_file: .github/prompts/nightly-code-review.md
+          prompt: |
+            COMMITS_TO_SCAN: ${{ env.COMMITS_TO_SCAN }}
+            PROTECTED_PATTERNS: ${{ env.PROTECTED_PATTERNS }}
+            CHANGED_FILES: |
+              ${{ needs.preflight.outputs.changed_files }}
+          claude_args: >-
+            --allowed-tools
+            "Bash(ruff *),Bash(cargo clippy *),Bash(python scripts/validate_recipes.py),Bash(python -m py_compile *),Bash(git *),Read,Write,Edit,Glob,Grep"
+            --max-turns 50
+        env:
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          CLAUDE_CODE_USE_BEDROCK: "1"
+
+      # ========== FALLBACK: Anthropic Direct API ==========
+      - name: Claude Review (Anthropic - Fallback)
+        id: anthropic_review
+        if: |
+          env.ANTHROPIC_KEY_SET == 'true' &&
+          (env.BEDROCK_CONFIGURED != 'true' || steps.bedrock_review.outcome != 'success')
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ secrets.PAT_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          show_full_output: true
+          prompt_file: .github/prompts/nightly-code-review.md
+          prompt: |
+            COMMITS_TO_SCAN: ${{ env.COMMITS_TO_SCAN }}
+            PROTECTED_PATTERNS: ${{ env.PROTECTED_PATTERNS }}
+            CHANGED_FILES: |
+              ${{ needs.preflight.outputs.changed_files }}
+          claude_args: >-
+            --allowed-tools
+            "Bash(ruff *),Bash(cargo clippy *),Bash(python scripts/validate_recipes.py),Bash(python -m py_compile *),Bash(git *),Read,Write,Edit,Glob,Grep"
+            --max-turns 50
+        env: {}
+
+  # ===========================================================================
+  # Guardrails + PR creation
+  # ===========================================================================
+  guardrails-and-pr:
+    name: Guardrails and PR
+    runs-on: ubuntu-latest
+    needs: [preflight, review]
+    if: always() && needs.review.result == 'success'
+    timeout-minutes: 15
+    env:
+      PROTECTED_PATTERNS: ${{ needs.preflight.outputs.protected_patterns }}
+    steps:
+      - name: Determine review branch
+        run: |
+          echo "REVIEW_BRANCH=nightly-review/$(date -u +%Y-%m-%d)" >> $GITHUB_ENV
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REVIEW_BRANCH }}
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install validation tools
+        run: pip install ruff
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
+      # --- Guardrail 1: Revert protected paths ---
+      - name: Revert protected paths
+        run: |
+          REVERTED=0
+          for pattern in $PROTECTED_PATTERNS; do
+            CHANGED=$(git diff --name-only origin/main...HEAD -- "$pattern" 2>/dev/null || true)
+            if [ -n "$CHANGED" ]; then
+              echo "::warning::Reverting protected file(s): $CHANGED"
+              echo "$CHANGED" | while read -r f; do
+                git checkout origin/main -- "$f" 2>/dev/null || true
+              done
+              REVERTED=1
+            fi
+          done
+          if [ "$REVERTED" -eq 1 ]; then
+            git add -A
+            git commit -m "guardrail: revert changes to protected paths" || true
+            git push || true
+          fi
+
+      # --- Guardrail 2: Diff size gate (500 lines for nightly) ---
+      - name: Check diff size
+        run: |
+          DIFF_LINES=$(git diff --stat origin/main...HEAD | tail -1 | grep -oP '\d+ insertion' | grep -oP '\d+' || echo 0)
+          DEL_LINES=$(git diff --stat origin/main...HEAD | tail -1 | grep -oP '\d+ deletion' | grep -oP '\d+' || echo 0)
+          TOTAL=$((DIFF_LINES + DEL_LINES))
+          echo "Total diff size: $TOTAL lines"
+          if [ "$TOTAL" -gt 500 ]; then
+            echo "::error::Nightly review diff exceeds 500 line gate ($TOTAL lines). Review should be incremental."
+            exit 1
+          fi
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::notice::No changes to commit. Nightly review found no issues."
+            exit 0
+          fi
+          echo "Diff size gate: passed ($TOTAL lines)"
+
+      # --- Guardrail 3: Syntax validation ---
+      - name: Validate Python syntax
+        run: |
+          FAILED=0
+          for f in $(git diff --name-only origin/main...HEAD | grep '\.py$'); do
+            if [ -f "$f" ]; then
+              python -m py_compile "$f" 2>&1 || FAILED=1
+            fi
+          done
+          CHANGED_PY=$(git diff --name-only origin/main...HEAD | grep '\.py$' | tr '\n' ' ')
+          if [ -n "$CHANGED_PY" ]; then
+            ruff check $CHANGED_PY --output-format=github || FAILED=1
+          fi
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Python validation failed"
+            exit 1
+          fi
+
+      - name: Validate Rust syntax
+        run: |
+          CHANGED_RS=$(git diff --name-only origin/main...HEAD | grep '\.rs$' || true)
+          if [ -n "$CHANGED_RS" ]; then
+            cd gui/src-tauri && cargo clippy -- -D warnings
+          fi
+
+      - name: Validate recipes
+        run: |
+          CHANGED_RECIPES=$(git diff --name-only origin/main...HEAD | grep 'recipes/' || true)
+          if [ -n "$CHANGED_RECIPES" ]; then
+            python scripts/validate_recipes.py
+          fi
+
+      # --- Create PR ---
+      - name: Check for actual changes
+        id: has-changes
+        run: |
+          DIFF_COUNT=$(git diff --name-only origin/main...HEAD | wc -l | tr -d ' ')
+          echo "diff_count=$DIFF_COUNT" >> $GITHUB_OUTPUT
+
+      - name: Create draft PR
+        if: steps.has-changes.outputs.diff_count != '0' && github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          # Deduplication: check for existing PR on this branch
+          EXISTING=$(gh pr list --head "$REVIEW_BRANCH" --json number -q '.[0].number' 2>/dev/null || true)
+          if [ -n "$EXISTING" ]; then
+            echo "::notice::PR #$EXISTING already exists for branch $REVIEW_BRANCH"
+            exit 0
+          fi
+
+          DIFF_STAT=$(git diff --stat origin/main...HEAD | tail -1)
+          CHANGED_FILES=$(git diff --name-only origin/main...HEAD | head -30)
+          TODAY=$(date -u +%Y-%m-%d)
+
+          gh pr create \
+            --draft \
+            --title "chore: nightly code review ($TODAY)" \
+            --label "ai-generated,needs-human-review,nightly-review" \
+            --body "$(cat <<EOF
+          ## Nightly Code Review - $TODAY
+
+          Automated code quality review of recent commits.
+
+          **Commits scanned**: ${{ needs.preflight.outputs.commits_to_scan }}
+          **File types reviewed**: \`.py\`, \`.rs\`, \`.js\`, \`.html\`
+
+          ## Changes
+
+          \`\`\`
+          ${DIFF_STAT}
+          \`\`\`
+
+          <details>
+          <summary>Files changed</summary>
+
+          \`\`\`
+          ${CHANGED_FILES}
+          \`\`\`
+          </details>
+
+          ## Review Focus Areas
+
+          - Let It Crash compliance (no unauthorized try/except)
+          - KISS metrics (function length, nesting depth, complexity)
+          - Pure Functions (side effects pushed to boundaries)
+          - Recipe pattern compliance
+          - Rust/Tauri code quality (clippy)
+          - Frontend JS quality
+
+          ## Guardrails Passed
+
+          - [x] Protected-path reversion check
+          - [x] Diff size gate (< 500 lines)
+          - [x] Python syntax validation (py_compile + ruff)
+          - [x] Rust syntax validation (cargo clippy)
+          - [x] Recipe pattern validation
+
+          ---
+          *Generated by Nightly Code Review automation. Requires human review before merge.*
+          EOF
+          )"
+
+          PR_URL=$(gh pr list --head "$REVIEW_BRANCH" --json url -q '.[0].url')
+          echo "::notice::Draft PR created: $PR_URL"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Nightly Code Review Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Date | $(date -u +%Y-%m-%d) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commits scanned | ${{ needs.preflight.outputs.commits_to_scan }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Files with changes | ${{ steps.has-changes.outputs.diff_count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | $REVIEW_BRANCH |" >> $GITHUB_STEP_SUMMARY

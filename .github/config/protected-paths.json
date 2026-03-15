@@ -1,0 +1,27 @@
+{
+  "protected_patterns": [
+    ".github/workflows/*",
+    ".env*",
+    "recipes/",
+    "gui/src-tauri/src/",
+    "CLAUDE.md",
+    "Cargo.toml",
+    "tauri.conf.json"
+  ],
+  "high_stakes_paths": [
+    "recipes/",
+    "gui/src-tauri/src/composio.rs",
+    "gui/src-tauri/src/config.rs",
+    "gui/src-tauri/src/draft.rs",
+    "scripts/recipe_client.py"
+  ],
+  "doc_files": [
+    "CLAUDE.md"
+  ],
+  "scan_targets": [
+    "scripts/",
+    "recipes/",
+    "gui/src-tauri/src/",
+    "gui/src/"
+  ]
+}
