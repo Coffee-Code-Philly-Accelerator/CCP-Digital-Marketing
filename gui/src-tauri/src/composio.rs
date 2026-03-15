@@ -211,6 +211,19 @@ pub fn extract_llm_content(result: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Extract image URL from a Composio tool response.
+/// Handles v3 format (`data.image.s3url`) and recipe format (`data.publicUrl`).
+pub fn extract_image_url(result: &Value) -> String {
+    let data = extract_data(result);
+    data.get("image")
+        .and_then(|img| img.get("s3url").or_else(|| img.get("publicUrl")))
+        .or_else(|| data.get("publicUrl"))
+        .or_else(|| data.get("s3url"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 /// Extract the first JSON object from text that may contain surrounding prose.
 /// Handles LLM responses wrapped in markdown code blocks or explanation text.
 pub fn extract_json_from_text(text: &str) -> Option<Value> {
@@ -237,12 +250,13 @@ pub fn extract_json_from_text(text: &str) -> Option<Value> {
     None
 }
 
-/// UTF-8 safe string truncation.
+/// UTF-8 safe string truncation (single pass).
 fn truncate_str(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max_chars).collect();
+    let mut chars = s.chars();
+    let truncated: String = (&mut chars).take(max_chars).collect();
+    if chars.next().is_some() {
         format!("{}...", truncated)
+    } else {
+        truncated
     }
 }

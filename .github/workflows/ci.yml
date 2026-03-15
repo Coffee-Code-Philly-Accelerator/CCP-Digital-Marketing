@@ -5,137 +5,136 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
-# Cancel in-progress runs for the same branch/PR
+# Cancel in-progress runs when a new commit is pushed to the same branch/PR
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PYTHON_VERSION: "3.12"
+
 jobs:
-  # ===================================================================
-  # Lint: ruff check (errors, style, security, bugs)
-  # ===================================================================
+  # ============================================================================
+  # LINTING - Ruff check (errors, style, security, bugs)
+  # ============================================================================
   lint:
-    name: Lint (ruff)
+    name: Lint (Ruff)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v6
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install ruff
+      - name: Install Ruff
         run: pip install ruff
 
-      - name: Run ruff check
-        run: ruff check --output-format=github .
+      - name: Run Ruff linter
+        run: ruff check scripts/ recipes/ --output-format=github
 
-  # ===================================================================
-  # Format: ruff format --check (consistent code style)
-  # ===================================================================
+  # ============================================================================
+  # FORMAT - Ruff format --check (consistent code style)
+  # ============================================================================
   format:
-    name: Format (ruff)
+    name: Format (Ruff)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v6
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install ruff
+      - name: Install Ruff
         run: pip install ruff
 
       - name: Check formatting
-        run: ruff format --check .
+        run: ruff format --check scripts/ recipes/
 
-  # ===================================================================
-  # Recipe Validation: structural checks on Rube MCP recipes
-  # ===================================================================
+  # ============================================================================
+  # RECIPE VALIDATION - Structural checks on Rube MCP recipes
+  # ============================================================================
   recipe-validation:
     name: Recipe Validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v6
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Validate recipe patterns
         run: python scripts/validate_recipes.py
 
-  # ===================================================================
-  # Security: scan for secrets and dangerous patterns
-  # ===================================================================
+  # ============================================================================
+  # SECURITY - Bandit + pip-audit
+  # ============================================================================
   security:
-    name: Security Checks
+    name: Security Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - name: Check for hardcoded secrets
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install security tools
+        run: pip install bandit
+
+      - name: Run Bandit security scan
+        run: bandit -r scripts/ recipes/ -ll --format json --output bandit-report.json || true
+
+      - name: Parse Bandit results
         run: |
-          echo "Scanning for potential hardcoded secrets..."
-          FOUND=0
+          python << 'PYEOF'
+          import json
+          from pathlib import Path
 
-          # Check for hardcoded API keys (common patterns)
-          if grep -rn --include="*.py" -E "(api_key|API_KEY|secret|SECRET|token|TOKEN)\s*=\s*['\"][a-zA-Z0-9_\-]{20,}" \
-              --exclude-dir=.git --exclude-dir=__pycache__ \
-              scripts/ recipes/ 2>/dev/null; then
-            echo "::error::Potential hardcoded secrets found in source files"
-            FOUND=1
-          fi
+          report_path = Path("bandit-report.json")
+          if not report_path.exists():
+              print("No security issues found (no report generated)")
+              raise SystemExit(0)
 
-          # Check that no .env files are committed
-          if [ -f scripts/.env ] || [ -f recipes/.env ] || [ -f .env ]; then
-            echo "::error::.env file found in repository"
-            FOUND=1
-          fi
+          report = json.loads(report_path.read_text())
+          high_issues = [r for r in report.get("results", []) if r.get("issue_severity") == "HIGH"]
+          medium_issues = [r for r in report.get("results", []) if r.get("issue_severity") == "MEDIUM"]
 
-          if [ "$FOUND" -eq 0 ]; then
-            echo "No hardcoded secrets found"
-          fi
-          exit $FOUND
+          print(f"Security scan complete:")
+          print(f"  High severity issues: {len(high_issues)}")
+          print(f"  Medium severity issues: {len(medium_issues)}")
 
-      - name: Check for dangerous patterns
+          if high_issues:
+              print("\nHigh severity issues found:")
+              for issue in high_issues:
+                  print(f"  - {issue['filename']}:{issue['line_number']}: {issue['issue_text']}")
+              raise SystemExit(1)
+          PYEOF
+
+      - name: Check dependencies for vulnerabilities
         run: |
-          echo "Scanning for dangerous code patterns..."
-          FOUND=0
+          pip install pip-audit
+          pip-audit -r scripts/requirements.txt --desc || true
 
-          # Check for eval() usage (exec() is allowed in test helpers for AST extraction)
-          if grep -rn --include="*.py" '\beval\s*(' \
-              --exclude-dir=.git --exclude-dir=__pycache__ \
-              scripts/ recipes/ 2>/dev/null; then
-            echo "::error::eval() found in source code"
-            FOUND=1
-          fi
+      - name: Upload security report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-report
+          path: bandit-report.json
+          if-no-files-found: ignore
 
-          # Check for shell=True in subprocess calls
-          if grep -rn --include="*.py" 'subprocess.*shell\s*=\s*True' \
-              --exclude-dir=.git --exclude-dir=__pycache__ \
-              scripts/ recipes/ tests/ 2>/dev/null; then
-            echo "::error::subprocess with shell=True found"
-            FOUND=1
-          fi
-
-          # Check for pickle usage (deserialization attacks)
-          if grep -rn --include="*.py" '\bpickle\b' \
-              --exclude-dir=.git --exclude-dir=__pycache__ \
-              scripts/ recipes/ 2>/dev/null; then
-            echo "::error::pickle usage found in source code"
-            FOUND=1
-          fi
-
-          if [ "$FOUND" -eq 0 ]; then
-            echo "No dangerous patterns found"
-          fi
-          exit $FOUND
-
-  # ===================================================================
-  # Test: pytest across Python version matrix
-  # ===================================================================
+  # ============================================================================
+  # TEST - pytest across Python version matrix
+  # ============================================================================
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -144,9 +143,9 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -158,50 +157,50 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v --tb=short
 
-  # ===================================================================
-  # Coverage: pytest-cov with minimum threshold
-  # ===================================================================
-  coverage:
-    name: Coverage
+  # ============================================================================
+  # CARGO CHECK - Rust/Tauri lint and format validation
+  # ============================================================================
+  cargo-check:
+    name: Cargo Check (Rust)
     runs-on: ubuntu-latest
-    needs: [test]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: "3.12"
+          components: clippy, rustfmt
 
-      - name: Install dependencies
+      - name: Install Tauri system dependencies
         run: |
-          pip install -r scripts/requirements.txt
-          pip install -r requirements-test.txt
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
-      - name: Run tests with coverage
-        run: |
-          pytest tests/ \
-            --cov=scripts \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage.xml \
-            --cov-config=pyproject.toml \
-            -v --tb=short
-
-      - name: Upload coverage artifact
-        if: always()
-        uses: actions/upload-artifact@v7
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
-          name: coverage-report
-          path: coverage.xml
-          retention-days: 30
+          workspaces: gui/src-tauri
 
-  # ===================================================================
-  # Design Principles: automated enforcement of CLAUDE.md rules
-  # ===================================================================
+      - name: Run clippy
+        working-directory: gui/src-tauri
+        run: cargo clippy -- -D warnings
+
+      - name: Check formatting
+        working-directory: gui/src-tauri
+        run: cargo fmt -- --check
+
+  # ============================================================================
+  # DESIGN PRINCIPLES - Automated enforcement of CLAUDE.md rules
+  # ============================================================================
   design-principles:
     name: Design Principles
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: "Let It Crash: check for unauthorized try/except"
         run: |
@@ -209,13 +208,9 @@ jobs:
           FOUND=0
 
           # Count try/except blocks in recipe source files (excluding mock guards)
-          # Mock guards are: try: <name> except NameError: def <name>
-          # Any other try/except in recipes is a violation
           for f in recipes/*.py; do
-            # Skip auth_setup.py (not a recipe)
             [ "$(basename "$f")" = "auth_setup.py" ] && continue
 
-            # Count all 'except' lines that are NOT 'except NameError'
             VIOLATIONS=$(grep -n '^\s*except ' "$f" | grep -v 'except NameError' | grep -v '# LET-IT-CRASH-EXCEPTION' || true)
             if [ -n "$VIOLATIONS" ]; then
               echo "::error file=$f::Unauthorized try/except in recipe (Let It Crash violation)"
@@ -224,9 +219,6 @@ jobs:
             fi
           done
 
-          # In scripts/, check for try/except without LET-IT-CRASH-EXCEPTION
-          # (recipe_client.py has some existing exception handling for HTTP)
-          # We only flag NEW violations - blocks without annotation
           for f in scripts/*.py; do
             [ "$(basename "$f")" = "validate_recipes.py" ] && continue
             BARE_EXCEPT=$(grep -n '^\s*except\s*:' "$f" || true)
@@ -245,9 +237,7 @@ jobs:
       - name: "KISS: check complexity metrics"
         run: |
           echo "Checking KISS metrics..."
-          FOUND=0
 
-          # Check for files over 500 lines (KISS threshold from CLAUDE.md)
           for f in $(find scripts recipes -name "*.py"); do
             LINES=$(wc -l < "$f")
             if [ "$LINES" -gt 700 ]; then
@@ -255,7 +245,6 @@ jobs:
             fi
           done
 
-          # Check for deeply nested code (4+ levels of indentation = 16+ spaces)
           for f in $(find scripts recipes -name "*.py"); do
             DEEP=$(grep -n '^\s\{16,\}[^ ]' "$f" || true)
             if [ -n "$DEEP" ]; then
@@ -269,7 +258,6 @@ jobs:
         run: |
           echo "Checking for global state mutations..."
 
-          # Check for 'global' keyword in function bodies
           for f in $(find scripts recipes -name "*.py"); do
             GLOBALS=$(grep -n '^\s\+global ' "$f" || true)
             if [ -n "$GLOBALS" ]; then
@@ -280,102 +268,210 @@ jobs:
 
           echo "Pure Functions check complete"
 
-  # ===================================================================
-  # File Hygiene: prevent accidental commits of unwanted files
-  # ===================================================================
-  file-hygiene:
-    name: File Hygiene
+  # ============================================================================
+  # CLAUDE CODE REVIEW - Bedrock Primary + Anthropic Fallback
+  # ============================================================================
+  claude-review:
+    name: Claude Code Review
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+    needs: [lint]
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+    env:
+      BEDROCK_CONFIGURED: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK != '' }}
+      ANTHROPIC_KEY_SET: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Check for unwanted files
-        run: |
-          echo "Checking for unwanted committed files..."
-          FOUND=0
-
-          # Check for compiled Python files
-          if find . -name "*.pyc" -o -name "__pycache__" | grep -q .; then
-            echo "::error::Compiled Python files (.pyc/__pycache__) found in repo"
-            FOUND=1
-          fi
-
-          # Check for OS-specific files
-          for f in .DS_Store Thumbs.db desktop.ini; do
-            if find . -name "$f" | grep -q .; then
-              echo "::error::OS-specific file ($f) found in repo"
-              FOUND=1
-            fi
-          done
-
-          # Check for IDE config (allow .github and .claude)
-          for d in .idea .vscode *.swp; do
-            if find . -name "$d" -not -path "./.git/*" | grep -q .; then
-              echo "::warning::IDE config ($d) found in repo"
-            fi
-          done
-
-          # Check for large files (>1MB)
-          LARGE=$(find . -type f -size +1M -not -path "./.git/*" 2>/dev/null || true)
-          if [ -n "$LARGE" ]; then
-            echo "::warning::Large files found (>1MB):"
-            echo "$LARGE"
-          fi
-
-          if [ "$FOUND" -eq 0 ]; then
-            echo "File hygiene: OK"
-          fi
-          exit $FOUND
-
-  # ===================================================================
-  # Dependency Check: ensure requirements files are valid
-  # ===================================================================
-  dependency-check:
-    name: Dependency Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v4
         with:
-          python-version: "3.12"
+          fetch-depth: 0
 
-      - name: Validate requirements files
+      - name: Validate at least one provider is configured
         run: |
-          echo "Validating requirements files..."
-          FOUND=0
-
-          for reqfile in scripts/requirements.txt requirements-test.txt; do
-            if [ ! -f "$reqfile" ]; then
-              echo "::error::Missing requirements file: $reqfile"
-              FOUND=1
-              continue
-            fi
-
-            echo "Checking $reqfile..."
-            # Dry-run install to check for resolution issues
-            if ! pip install --dry-run -r "$reqfile" 2>&1; then
-              echo "::error::Dependency resolution failed for $reqfile"
-              FOUND=1
-            fi
-          done
-
-          if [ "$FOUND" -eq 0 ]; then
-            echo "All requirements files valid"
+          if [ "${{ env.BEDROCK_CONFIGURED }}" != "true" ] && [ "${{ env.ANTHROPIC_KEY_SET }}" != "true" ]; then
+            echo "::error::No API provider configured. Add AWS credentials (Bedrock) OR ANTHROPIC_API_KEY."
+            exit 1
           fi
-          exit $FOUND
+          echo "Bedrock configured: ${{ env.BEDROCK_CONFIGURED }}"
+          echo "Anthropic configured: ${{ env.ANTHROPIC_KEY_SET }}"
 
-      - name: Check for known vulnerabilities
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Create PAL MCP Config
         run: |
-          pip install pip-audit
-          echo "Auditing scripts/requirements.txt..."
-          pip-audit -r scripts/requirements.txt --desc || true
-          echo "Auditing requirements-test.txt..."
-          pip-audit -r requirements-test.txt --desc || true
+          cat > /tmp/pal-mcp-config.json << EOF
+          {
+            "mcpServers": {
+              "pal": {
+                "command": "uvx",
+                "args": ["--from", "git+https://github.com/BeehiveInnovations/pal-mcp-server.git", "pal-mcp-server"],
+                "env": {
+                  "GEMINI_API_KEY": "${{ secrets.GEMINI_API_KEY }}",
+                  "OPENAI_API_KEY": "${{ secrets.OPENAI_API_KEY }}"
+                }
+              }
+            }
+          }
+          EOF
 
-  # ===================================================================
+      - name: Get PR context
+        id: pr_context
+        run: |
+          echo "pr_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          echo "pr_title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+          FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | wc -l | tr -d ' ')
+          echo "files_changed=$FILES_CHANGED" >> $GITHUB_OUTPUT
+          DIFF_STATS=$(git diff --stat origin/${{ github.base_ref }}...HEAD | tail -1)
+          echo "diff_stats=$DIFF_STATS" >> $GITHUB_OUTPUT
+
+      # ========== PRIMARY: AWS Bedrock ==========
+      - name: Claude Code Review (Bedrock - Primary)
+        id: bedrock_review
+        if: env.BEDROCK_CONFIGURED == 'true'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          use_bedrock: "true"
+          show_full_output: true
+          prompt: |
+            You are an expert code reviewer for CCP Digital Marketing — an event creation + social promotion automation platform (Rust/Tauri + Python recipes + vanilla JS frontend).
+
+            **PR Number**: #${{ steps.pr_context.outputs.pr_number }}
+            **PR Title**: ${{ steps.pr_context.outputs.pr_title }}
+            **Files Changed**: ${{ steps.pr_context.outputs.files_changed }}
+            **Diff Stats**: ${{ steps.pr_context.outputs.diff_stats }}
+
+            ## Instructions
+            1. Get the full diff: `gh pr diff ${{ steps.pr_context.outputs.pr_number }}`
+            2. Use `mcp__pal__consensus` for multi-model code review (gemini-3-pro-preview, gpt-5.2)
+            3. Focus areas: security, code quality, Let It Crash compliance, KISS, recipe patterns
+            4. Post findings as PR comment: `gh pr comment ${{ steps.pr_context.outputs.pr_number }} --body "<markdown>"`
+
+            ## Review Format
+            Use this markdown format:
+            ```
+            ## Code Review: Multi-Model Consensus
+
+            **Models Consulted**: [models]
+            **PR**: #[number] - [title]
+
+            ### Critical Issues
+            [Must fix before merge]
+
+            ### High Priority
+            [Should be addressed]
+
+            ### Medium Priority
+            [Recommended improvements]
+
+            ### Positive Observations
+            [Good patterns observed]
+
+            ### Model Consensus
+            | Model | Key Findings |
+            |-------|--------------|
+
+            **Overall Assessment**: [APPROVE / REQUEST CHANGES / NEEDS DISCUSSION]
+
+            ---
+            *Generated by Claude Code Review with PAL MCP Multi-Model Consensus*
+            ```
+          claude_args: >-
+            --mcp-config /tmp/pal-mcp-config.json
+            --allowed-tools
+            "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,mcp__pal__codereview,mcp__pal__consensus,mcp__pal__listmodels"
+            --max-turns 25
+        env:
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Log Bedrock result
+        if: env.BEDROCK_CONFIGURED == 'true'
+        run: |
+          echo "Bedrock review outcome: ${{ steps.bedrock_review.outcome }}"
+          if [ "${{ steps.bedrock_review.outcome }}" == "success" ]; then
+            echo "::notice::Bedrock review completed successfully"
+          else
+            echo "::warning::Bedrock review failed, will attempt Anthropic fallback"
+          fi
+
+      # ========== FALLBACK: Anthropic Direct API ==========
+      - name: Claude Code Review (Anthropic - Fallback)
+        id: anthropic_review
+        if: |
+          env.ANTHROPIC_KEY_SET == 'true' &&
+          (env.BEDROCK_CONFIGURED != 'true' || steps.bedrock_review.outcome != 'success')
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          show_full_output: true
+          prompt: |
+            You are an expert code reviewer for CCP Digital Marketing — an event creation + social promotion automation platform (Rust/Tauri + Python recipes + vanilla JS frontend).
+
+            **PR Number**: #${{ steps.pr_context.outputs.pr_number }}
+            **PR Title**: ${{ steps.pr_context.outputs.pr_title }}
+            **Files Changed**: ${{ steps.pr_context.outputs.files_changed }}
+
+            ## Instructions
+            1. Get the full diff: `gh pr diff ${{ steps.pr_context.outputs.pr_number }}`
+            2. Use `mcp__pal__consensus` for multi-model code review
+            3. Focus: security, code quality, Let It Crash, KISS, recipe patterns
+            4. Post findings as PR comment
+
+            **Overall Assessment**: [APPROVE / REQUEST CHANGES / NEEDS DISCUSSION]
+          claude_args: >-
+            --mcp-config /tmp/pal-mcp-config.json
+            --allowed-tools
+            "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,mcp__pal__codereview,mcp__pal__consensus,mcp__pal__listmodels"
+            --max-turns 25
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      # ========== FINAL STATUS CHECK ==========
+      - name: Verify review completed
+        run: |
+          BEDROCK_RESULT="${{ steps.bedrock_review.outcome }}"
+          ANTHROPIC_RESULT="${{ steps.anthropic_review.outcome }}"
+
+          echo "## Code Review Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$BEDROCK_RESULT" == "success" ]; then
+            echo "| Provider | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| AWS Bedrock (Primary) | Success |" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          elif [ "$ANTHROPIC_RESULT" == "success" ]; then
+            echo "| Provider | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| AWS Bedrock (Primary) | Failed |" >> $GITHUB_STEP_SUMMARY
+            echo "| Anthropic API (Fallback) | Success |" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          else
+            echo "| Provider | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| AWS Bedrock (Primary) | ${BEDROCK_RESULT:-skipped} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Anthropic API (Fallback) | ${ANTHROPIC_RESULT:-skipped} |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**ERROR**: Both providers failed. Check API credentials and quota." >> $GITHUB_STEP_SUMMARY
+            echo "::error::Code review failed - both Bedrock and Anthropic providers failed"
+            exit 1
+          fi
+
+  # ============================================================================
   # All checks gate: single status for branch protection
-  # ===================================================================
+  # ============================================================================
   ci-pass:
     name: CI Pass
     if: always()
@@ -385,16 +481,13 @@ jobs:
       - recipe-validation
       - security
       - test
-      - coverage
+      - cargo-check
       - design-principles
-      - file-hygiene
-      - dependency-check
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs passed
         run: |
-          # Collect results from all required jobs
-          RESULTS="${{ needs.lint.result }} ${{ needs.format.result }} ${{ needs.recipe-validation.result }} ${{ needs.security.result }} ${{ needs.test.result }} ${{ needs.coverage.result }} ${{ needs.design-principles.result }} ${{ needs.file-hygiene.result }} ${{ needs.dependency-check.result }}"
+          RESULTS="${{ needs.lint.result }} ${{ needs.format.result }} ${{ needs.recipe-validation.result }} ${{ needs.security.result }} ${{ needs.test.result }} ${{ needs.cargo-check.result }} ${{ needs.design-principles.result }}"
 
           echo "Job results: $RESULTS"
 

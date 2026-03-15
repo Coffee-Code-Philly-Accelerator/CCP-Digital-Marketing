@@ -110,6 +110,14 @@ output
 
 All event creation recipes default to Hyperbrowser (`HYPERBROWSER_START_BROWSER_USE_TASK`) with persistent auth profiles, falling back to Composio's `BROWSER_TOOL_CREATE_TASK` when configured. Both use a single AI browser agent call + polling pattern instead of the old multi-step state machine with sequential `NAVIGATE`/`PERFORM_WEB_TASK`/`FETCH_WEBPAGE` calls that exceeded the 4-minute Rube runtime timeout.
 
+## Default Configuration
+
+| Platform | URL |
+|----------|-----|
+| Meetup Group | `https://www.meetup.com/code-coffee-philly` |
+
+**Note:** The Meetup group slug is `code-coffee-philly` (not `coffee-code-philly`).
+
 ## Composio Tool Reference
 
 ### Browser Automation (v3 - Hyperbrowser, Primary)
