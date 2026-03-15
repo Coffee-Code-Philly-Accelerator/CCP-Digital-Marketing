@@ -6,6 +6,7 @@ use std::env;
 pub struct AppConfig {
     pub api_base: String,
     pub api_key: String,
+    pub composio_user_id: String,
     pub drafts_dir: String,
     pub discord_channel_id: String,
     pub facebook_page_id: String,
@@ -16,13 +17,13 @@ pub struct AppConfig {
 impl AppConfig {
     pub fn from_env() -> Self {
         let project_root = env::var("CCP_PROJECT_ROOT").unwrap_or_else(|_| {
-            // Default: assume GUI is at <project>/gui/src-tauri, so root is ../../
+            // Exe is at gui/src-tauri/target/debug/ — 4 levels below project root
             let exe_dir = env::current_exe()
                 .ok()
                 .and_then(|p| p.parent().map(|p| p.to_path_buf()));
             exe_dir
                 .map(|d| {
-                    d.join("../../..")
+                    d.join("../../../..")
                         .canonicalize()
                         .unwrap_or_else(|_| d.to_path_buf())
                         .display()
@@ -33,8 +34,10 @@ impl AppConfig {
 
         Self {
             api_base: env::var("CCP_COMPOSIO_API_BASE")
-                .unwrap_or_else(|_| "https://backend.composio.dev/api/v1".to_string()),
+                .unwrap_or_else(|_| "https://backend.composio.dev".to_string()),
             api_key: env::var("COMPOSIO_API_KEY").unwrap_or_default(),
+            composio_user_id: env::var("CCP_COMPOSIO_USER_ID")
+                .unwrap_or_else(|_| "default".to_string()),
             drafts_dir: env::var("CCP_DRAFTS_DIR").unwrap_or_else(|_| {
                 std::path::Path::new(&project_root)
                     .join("drafts")

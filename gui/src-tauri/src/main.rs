@@ -58,9 +58,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize Composio client
     let app_config = AppConfig::from_env();
     if app_config.api_key.is_empty() {
-        println!("Warning: COMPOSIO_API_KEY not set. Recipe execution will be unavailable.");
+        println!("Warning: COMPOSIO_API_KEY not set. Tool execution will be unavailable.");
     } else {
-        println!("Composio client initialized (API base: {})", app_config.api_base);
+        println!(
+            "Composio v3 client initialized (base: {}, user: {})",
+            app_config.api_base, app_config.composio_user_id
+        );
     }
     println!("Drafts directory: {}", app_config.drafts_dir);
     let composio_client = ComposioClient::new(app_config);

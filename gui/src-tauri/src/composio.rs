@@ -1,17 +1,20 @@
-//! HTTP client for Composio recipe execution
+//! HTTP client for Composio v3 tool router session API
 //!
-//! Mirrors `ComposioRecipeClient` from `scripts/recipe_client.py`
+//! Executes individual tools via session-based API, replacing the
+//! deprecated v1 recipe execution endpoint.
 
 use crate::config::AppConfig;
 use crate::progress::{emit_progress, RecipeProgressEvent};
 use reqwest::Client;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::time::Instant;
 use tauri::AppHandle;
+use tokio::sync::RwLock;
 
 pub struct ComposioClient {
     http: Client,
     pub config: AppConfig,
+    session_id: RwLock<Option<String>>,
 }
 
 impl ComposioClient {
@@ -19,28 +22,89 @@ impl ComposioClient {
         Self {
             http: Client::new(),
             config,
+            session_id: RwLock::new(None),
         }
     }
 
-    /// Execute a recipe and optionally poll until completion.
-    /// Emits progress events to the frontend via `command` and `phase` labels.
-    pub async fn execute_recipe(
+    /// Ensure a v3 tool router session exists, creating one if needed.
+    async fn ensure_session(&self) -> Result<String, String> {
+        {
+            let guard = self.session_id.read().await;
+            if let Some(ref id) = *guard {
+                return Ok(id.clone());
+            }
+        }
+
+        let url = format!("{}/api/v3/tool_router/session", self.config.api_base);
+        let body = json!({ "user_id": self.config.composio_user_id });
+
+        let response = self
+            .http
+            .post(&url)
+            .header("x-api-key", &self.config.api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Session creation failed: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "Session creation HTTP {}: {}",
+                status,
+                truncate_str(&text, 500)
+            ));
+        }
+
+        let result: Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Session parse error: {}", e))?;
+
+        // Session ID can appear at various nesting levels
+        let session_id = result
+            .get("session_id")
+            .or_else(|| result.get("sessionId"))
+            .or_else(|| {
+                result
+                    .get("data")
+                    .and_then(|d| d.get("session_id").or_else(|| d.get("sessionId")))
+            })
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("No session_id in response: {}", result))?
+            .to_string();
+
+        let mut guard = self.session_id.write().await;
+        *guard = Some(session_id.clone());
+
+        Ok(session_id)
+    }
+
+    /// Invalidate the current session (e.g., on auth error).
+    async fn invalidate_session(&self) {
+        let mut guard = self.session_id.write().await;
+        *guard = None;
+    }
+
+    /// Execute a tool via the v3 tool router session API.
+    /// On 401/403, invalidates session and retries once.
+    pub async fn execute_tool(
         &self,
-        recipe_id: &str,
-        input_data: &Value,
+        tool_slug: &str,
+        arguments: &Value,
         app: &AppHandle,
         command: &str,
         phase: &str,
     ) -> Result<Value, String> {
         if self.config.api_key.is_empty() {
             return Err(
-                "COMPOSIO_API_KEY not set. Set it as an environment variable before launching the app."
+                "COMPOSIO_API_KEY not set. Set it as an environment variable before launching."
                     .to_string(),
             );
         }
 
-        let url = format!("{}/recipes/{}/execute", self.config.api_base, recipe_id);
-        let body = serde_json::json!({ "input_data": input_data });
         let start = Instant::now();
 
         emit_progress(
@@ -50,159 +114,135 @@ impl ComposioClient {
                 phase: phase.to_string(),
                 status: "started".to_string(),
                 elapsed_sec: 0,
-                message: format!("Executing recipe {}", recipe_id),
+                message: format!("Executing {}", tool_slug),
                 result: None,
             },
         );
 
-        let response = self
-            .http
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-        let status_code = response.status();
-        if !status_code.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "unknown error".to_string());
-            let truncated = if error_text.len() > 500 {
-                format!("{}...", &error_text[..500])
-            } else {
-                error_text
-            };
-            return Err(format!("HTTP {}: {}", status_code, truncated));
-        }
-
-        let result: Value = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-        // If we got an execution_id, poll for completion
-        if let Some(execution_id) = result.get("execution_id").and_then(|v| v.as_str()) {
-            return self
-                .poll_execution(execution_id, 300, app, command, phase, start)
-                .await;
-        }
-
-        Ok(result)
-    }
-
-    /// Poll an execution until terminal status or timeout.
-    async fn poll_execution(
-        &self,
-        execution_id: &str,
-        timeout_secs: u64,
-        app: &AppHandle,
-        command: &str,
-        phase: &str,
-        start: Instant,
-    ) -> Result<Value, String> {
-        let url = format!("{}/executions/{}", self.config.api_base, execution_id);
-        let terminal_statuses = ["completed", "success", "finished", "failed", "error"];
-
-        loop {
-            let elapsed = start.elapsed().as_secs();
-            if elapsed >= timeout_secs {
-                return Err(format!(
-                    "Timeout after {}s waiting for execution {}",
-                    timeout_secs, execution_id
-                ));
-            }
+        for attempt in 0..2u8 {
+            let session_id = self.ensure_session().await?;
+            let url = format!(
+                "{}/api/v3/tool_router/session/{}/execute",
+                self.config.api_base, session_id
+            );
+            let body = json!({
+                "tool_slug": tool_slug,
+                "arguments": arguments,
+            });
 
             let response = self
                 .http
-                .get(&url)
-                .header("Authorization", format!("Bearer {}", self.config.api_key))
-                .header("Accept", "application/json")
+                .post(&url)
+                .header("x-api-key", &self.config.api_key)
+                .header("Content-Type", "application/json")
+                .json(&body)
                 .send()
                 .await
-                .map_err(|e| format!("Poll request failed: {}", e))?;
+                .map_err(|e| format!("{} request failed: {}", tool_slug, e))?;
+
+            let status_code = response.status();
+
+            // Retry once with fresh session on auth errors
+            if (status_code.as_u16() == 401 || status_code.as_u16() == 403) && attempt == 0 {
+                self.invalidate_session().await;
+                continue;
+            }
+
+            if !status_code.is_success() {
+                let error_text = response.text().await.unwrap_or_default();
+                return Err(format!(
+                    "{} HTTP {}: {}",
+                    tool_slug,
+                    status_code,
+                    truncate_str(&error_text, 500)
+                ));
+            }
 
             let result: Value = response
                 .json()
                 .await
-                .map_err(|e| format!("Failed to parse poll response: {}", e))?;
+                .map_err(|e| format!("Failed to parse {} response: {}", tool_slug, e))?;
 
-            let status = result
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-
+            let elapsed = start.elapsed().as_secs();
             emit_progress(
                 app,
                 RecipeProgressEvent {
                     command: command.to_string(),
                     phase: phase.to_string(),
-                    status: format!("polling:{}", status),
+                    status: "completed".to_string(),
                     elapsed_sec: elapsed,
-                    message: format!("Execution {} status: {}", execution_id, status),
-                    result: None,
+                    message: format!("{} completed", tool_slug),
+                    result: Some(result.clone()),
                 },
             );
 
-            if terminal_statuses.contains(&status) {
-                let final_status = if status == "failed" || status == "error" {
-                    "failed"
-                } else {
-                    "completed"
-                };
+            return Ok(result);
+        }
 
-                emit_progress(
-                    app,
-                    RecipeProgressEvent {
-                        command: command.to_string(),
-                        phase: phase.to_string(),
-                        status: final_status.to_string(),
-                        elapsed_sec: elapsed,
-                        message: format!("Execution {} {}", execution_id, final_status),
-                        result: Some(result.clone()),
-                    },
-                );
+        Err(format!("{}: auth retry exhausted", tool_slug))
+    }
+}
 
-                return Ok(result);
-            }
+// ============================================================================
+// Response extraction helpers
+// ============================================================================
 
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+/// Extract nested data from Composio API response.
+/// Handles both `{data: {...}}` and `{data: {data: {...}}}` patterns.
+pub fn extract_data(result: &Value) -> Value {
+    let data = result.get("data").unwrap_or(result);
+    if let Some(inner) = data.get("data") {
+        if inner.is_object() || inner.is_array() {
+            return inner.clone();
         }
     }
+    data.clone()
+}
 
-    /// Get recipe metadata/schema.
-    pub async fn get_recipe_details(&self, recipe_id: &str) -> Result<Value, String> {
-        if self.config.api_key.is_empty() {
-            return Err("COMPOSIO_API_KEY not set.".to_string());
+/// Extract the text content from an LLM chat completion response.
+/// Handles OpenAI-compatible `choices[0].message.content` structure.
+pub fn extract_llm_content(result: &Value) -> Option<String> {
+    let data = extract_data(result);
+    data.get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Extract the first JSON object from text that may contain surrounding prose.
+/// Handles LLM responses wrapped in markdown code blocks or explanation text.
+pub fn extract_json_from_text(text: &str) -> Option<Value> {
+    if let Ok(val) = serde_json::from_str::<Value>(text) {
+        return Some(val);
+    }
+
+    let bytes = text.as_bytes();
+    let start = bytes.iter().position(|&b| b == b'{')?;
+    let mut depth = 0i32;
+    for (i, &b) in bytes[start..].iter().enumerate() {
+        match b {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let slice = &text[start..start + i + 1];
+                    return serde_json::from_str(slice).ok();
+                }
+            }
+            _ => {}
         }
+    }
+    None
+}
 
-        let url = format!("{}/recipes/{}", self.config.api_base, recipe_id);
-
-        let response = self
-            .http
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-        let status_code = response.status();
-        if !status_code.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "unknown error".to_string());
-            return Err(format!("HTTP {}: {}", status_code, error_text));
-        }
-
-        response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse response: {}", e))
+/// UTF-8 safe string truncation.
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{}...", truncated)
     }
 }
