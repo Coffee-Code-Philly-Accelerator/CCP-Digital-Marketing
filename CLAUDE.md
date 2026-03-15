@@ -416,7 +416,6 @@ Centralized in `.github/config/protected-paths.json`. Autonomous workflows rever
 | `ANTHROPIC_API_KEY` | Claude Code API (fallback provider) |
 | `AWS_BEARER_TOKEN_BEDROCK` | AWS Bedrock (primary provider) |
 | `AWS_REGION` | Bedrock region (default: us-east-1) |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code authentication for review workflows |
 | `PAT_TOKEN` | PR creation (repo + workflow scopes) |
 | `GEMINI_API_KEY` | PAL MCP consensus (Gemini model) |
 | `OPENAI_API_KEY` | PAL MCP consensus (GPT model) |

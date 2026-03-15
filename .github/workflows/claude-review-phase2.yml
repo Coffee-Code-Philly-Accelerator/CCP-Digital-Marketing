@@ -2,12 +2,12 @@ name: Claude Review - Phase 2 (Selective Consensus)
 
 # Phase 2: Claude Review + PAL MCP consensus for high-stakes changes
 # Triggers multi-model review for security-sensitive files
+# Uses Bedrock primary + Anthropic fallback
 # Estimated cost: $1.50/PR (normal) | $3-5/PR (high-stakes with consensus)
 
 on:
   pull_request:
     types: [opened, ready_for_review, synchronize]
-    # Only trigger on specific paths or when labeled
   issue_comment:
     types: [created]
 
@@ -29,14 +29,21 @@ jobs:
       - name: Check for high-stakes changes
         id: check
         run: |
-          # Define high-stakes patterns
+          # High-stakes patterns for CCP (from .github/config/protected-paths.json)
           HIGH_STAKES_PATTERNS=(
             ".env"
             "secrets/"
             "credentials/"
             ".github/workflows/"
-            "gui/src-tauri/src/config.rs"
+            "recipes/"
             "gui/src-tauri/src/composio.rs"
+            "gui/src-tauri/src/config.rs"
+            "gui/src-tauri/src/draft.rs"
+            "gui/src-tauri/src/draft_commands.rs"
+            "scripts/recipe_client.py"
+            "Cargo.toml"
+            "tauri.conf.json"
+            "CLAUDE.md"
           )
 
           # Get changed files
@@ -48,13 +55,17 @@ jobs:
 
           # Check each pattern
           for pattern in "${HIGH_STAKES_PATTERNS[@]}"; do
-            if echo "$CHANGED_FILES" | grep -i "$pattern" > /dev/null; then
+            MATCHED=$(echo "$CHANGED_FILES" | grep -i "$pattern" || true)
+            if [ -n "$MATCHED" ]; then
               IS_HIGH_STAKES="true"
-              SENSITIVE_FILES=$(echo "$CHANGED_FILES" | grep -i "$pattern" | head -5)
+              SENSITIVE_FILES="$SENSITIVE_FILES
+          $MATCHED"
               REASON="Security-sensitive files detected: $pattern"
-              break
             fi
           done
+
+          # Trim and deduplicate sensitive files
+          SENSITIVE_FILES=$(echo "$SENSITIVE_FILES" | sort -u | head -10 | sed '/^$/d')
 
           # Check if /ai-consensus label is present (manual trigger)
           if [[ "${{ contains(github.event.pull_request.labels.*.name, 'ai-consensus') }}" == "true" ]]; then
@@ -69,7 +80,7 @@ jobs:
           echo "reason=$REASON" >> $GITHUB_OUTPUT
 
           if [ "$IS_HIGH_STAKES" == "true" ]; then
-            echo "::notice::🔒 High-stakes changes detected - will trigger multi-model consensus"
+            echo "::notice::High-stakes changes detected - will trigger multi-model consensus"
           fi
 
   claude-review:
@@ -82,33 +93,188 @@ jobs:
 
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
     outputs:
-      review_output: ${{ steps.review.outputs.result }}
+      review_output: ${{ steps.bedrock_review.outputs.result || steps.anthropic_review.outputs.result }}
+
+    env:
+      BEDROCK_CONFIGURED: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK != '' }}
+      ANTHROPIC_KEY_SET: ${{ secrets.ANTHROPIC_API_KEY != '' }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          sparse-checkout: |
+            scripts/
+            recipes/
+            gui/src-tauri/src/
+            gui/src/
+            tests/
+            CLAUDE.md
+            .github/config/
 
-      - name: Run Claude Code Review
-        id: review
+      - name: Validate API provider
+        run: |
+          if [ "${{ env.BEDROCK_CONFIGURED }}" != "true" ] && [ "${{ env.ANTHROPIC_KEY_SET }}" != "true" ]; then
+            echo "::error::No API provider configured. Add AWS Bedrock credentials OR ANTHROPIC_API_KEY."
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Create PAL MCP Config
+        run: |
+          cat > /tmp/pal-mcp-config.json << EOF
+          {
+            "mcpServers": {
+              "pal": {
+                "command": "uvx",
+                "args": ["--from", "git+https://github.com/BeehiveInnovations/pal-mcp-server.git", "pal-mcp-server"],
+                "env": {
+                  "GEMINI_API_KEY": "${{ secrets.GEMINI_API_KEY }}",
+                  "OPENAI_API_KEY": "${{ secrets.OPENAI_API_KEY }}"
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Get PR context
+        id: pr_context
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          echo "pr_number=$PR_NUM" >> $GITHUB_OUTPUT
+          echo "pr_title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+          FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | wc -l | tr -d ' ')
+          echo "files_changed=$FILES_CHANGED" >> $GITHUB_OUTPUT
+          DIFF_STATS=$(git diff --stat origin/${{ github.base_ref }}...HEAD | tail -1)
+          echo "diff_stats=$DIFF_STATS" >> $GITHUB_OUTPUT
+
+      # ========== PRIMARY: AWS Bedrock ==========
+      - name: Claude Code Review (Bedrock - Primary)
+        id: bedrock_review
+        if: env.BEDROCK_CONFIGURED == 'true'
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         with:
-          claude_args: |
-            code-review \
-            --model claude-opus-4-5-20251101 \
-            --max-turns 20 \
-            --allowedTools "Bash(git diff *),Bash(git log *),Bash(git blame *),Read"
-
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_bedrock: "true"
+          show_full_output: true
+          prompt: |
+            You are an expert code reviewer for CCP Digital Marketing -- an event creation + social promotion automation platform (Rust/Tauri + Python recipes + vanilla JS frontend).
 
-      - name: Save Claude review to artifact
+            **PR**: #${{ steps.pr_context.outputs.pr_number }} - ${{ steps.pr_context.outputs.pr_title }}
+            **Files Changed**: ${{ steps.pr_context.outputs.files_changed }}
+            **Diff Stats**: ${{ steps.pr_context.outputs.diff_stats }}
+            **High-Stakes**: ${{ needs.detect-high-stakes.outputs.is_high_stakes }}
+
+            ## Architecture Context
+            - **Rust backend**: `gui/src-tauri/src/` (composio.rs, config.rs, draft.rs, draft_commands.rs, recipe_commands.rs, progress.rs, db.rs, main.rs)
+            - **Python recipes**: `recipes/*.py` (self-contained Rube MCP scripts with duplicated helpers)
+            - **Python CLI**: `scripts/recipe_client.py`, `scripts/draft_store.py`
+            - **Frontend**: `gui/src/*.js` (vanilla JS, Tauri IPC bridge)
+
+            ## Review Instructions
+            1. Get the full diff: `gh pr diff ${{ steps.pr_context.outputs.pr_number }}`
+            2. Read `CLAUDE.md` for design principles
+            3. Use `mcp__pal__consensus` for multi-model code review (gemini-3-pro-preview, gpt-5.2)
+            4. Focus areas:
+               - **Let It Crash**: No unauthorized try/except (most important principle)
+               - **Security**: XSS in frontend, path traversal in draft commands, input sanitization
+               - **Recipe patterns**: Self-contained, RECIPE docstring, bare variable output
+               - **KISS**: Function length < 30 lines, nesting < 3 levels
+               - **Pure Functions**: Side effects pushed to boundaries
+            5. Post findings as PR comment: `gh pr comment ${{ steps.pr_context.outputs.pr_number }} --body "<markdown>"`
+
+            ## Review Format
+            ```
+            ## Code Review: Multi-Model Consensus
+
+            **Models Consulted**: [models]
+            **PR**: #[number] - [title]
+
+            ### Critical Issues
+            ### High Priority
+            ### Medium Priority
+            ### Positive Observations
+
+            ### Model Consensus
+            | Model | Key Findings |
+            |-------|--------------|
+
+            **Overall Assessment**: [APPROVE / REQUEST CHANGES / NEEDS DISCUSSION]
+            ```
+          claude_args: >-
+            --mcp-config /tmp/pal-mcp-config.json
+            --allowed-tools
+            "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,mcp__pal__codereview,mcp__pal__consensus,mcp__pal__listmodels"
+            --max-turns 25
+        env:
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      # ========== FALLBACK: Anthropic Direct API ==========
+      - name: Claude Code Review (Anthropic - Fallback)
+        id: anthropic_review
+        if: |
+          env.ANTHROPIC_KEY_SET == 'true' &&
+          (env.BEDROCK_CONFIGURED != 'true' || steps.bedrock_review.outcome != 'success')
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          show_full_output: true
+          prompt: |
+            You are an expert code reviewer for CCP Digital Marketing -- an event creation + social promotion automation platform (Rust/Tauri + Python recipes + vanilla JS frontend).
+
+            **PR**: #${{ steps.pr_context.outputs.pr_number }} - ${{ steps.pr_context.outputs.pr_title }}
+            **Files Changed**: ${{ steps.pr_context.outputs.files_changed }}
+
+            ## Review Instructions
+            1. Get the full diff: `gh pr diff ${{ steps.pr_context.outputs.pr_number }}`
+            2. Read `CLAUDE.md` for design principles
+            3. Use `mcp__pal__consensus` for multi-model code review
+            4. Focus: Let It Crash compliance, security, recipe patterns, KISS, pure functions
+            5. Post findings as PR comment
+
+            **Overall Assessment**: [APPROVE / REQUEST CHANGES / NEEDS DISCUSSION]
+          claude_args: >-
+            --mcp-config /tmp/pal-mcp-config.json
+            --allowed-tools
+            "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,mcp__pal__codereview,mcp__pal__consensus,mcp__pal__listmodels"
+            --max-turns 25
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Log review result
+        if: always()
+        run: |
+          BEDROCK_RESULT="${{ steps.bedrock_review.outcome }}"
+          ANTHROPIC_RESULT="${{ steps.anthropic_review.outcome }}"
+          if [ "$BEDROCK_RESULT" == "success" ]; then
+            echo "::notice::Review completed via Bedrock"
+          elif [ "$ANTHROPIC_RESULT" == "success" ]; then
+            echo "::notice::Review completed via Anthropic (fallback)"
+          else
+            echo "::warning::Both review providers failed"
+          fi
+
+      - name: Save review to artifact
         if: needs.detect-high-stakes.outputs.is_high_stakes == 'true'
         run: |
           mkdir -p /tmp/review-artifacts
-          echo "${{ steps.review.outputs.result }}" > /tmp/review-artifacts/claude-review.json
+          echo "${{ steps.bedrock_review.outputs.result || steps.anthropic_review.outputs.result }}" > /tmp/review-artifacts/claude-review.json
 
       - name: Upload review artifact
         if: needs.detect-high-stakes.outputs.is_high_stakes == 'true'
@@ -138,14 +304,14 @@ jobs:
         run: |
           if [ -z "$PAL_MCP_API_KEY" ]; then
             echo "configured=false" >> $GITHUB_OUTPUT
-            echo "⚠️ PAL MCP is not configured (missing PAL_MCP_API_KEY)"
+            echo "PAL MCP is not configured (missing PAL_MCP_API_KEY)"
           else
             echo "configured=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Post configuration notice
         if: steps.check-pal.outputs.configured == 'false'
-        continue-on-error: true  # Non-blocking if comment posting fails (permissions)
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -154,24 +320,21 @@ jobs:
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: context.payload.pull_request.number,
-                body: `## ℹ️ PAL MCP Consensus Not Available
+                body: `## PAL MCP Consensus Not Available
 
-                Security-sensitive files were detected, but PAL MCP multi-model consensus is not configured.
+            Security-sensitive files were detected, but PAL MCP multi-model consensus is not configured.
 
-                **High-stakes files changed**: \`${{ needs.detect-high-stakes.outputs.sensitive_files }}\`
+            **High-stakes files changed**: \`${{ needs.detect-high-stakes.outputs.sensitive_files }}\`
 
-                **To enable PAL MCP consensus**:
-                1. Configure \`PAL_MCP_API_KEY\` and \`PAL_MCP_ENDPOINT\` secrets
-                2. See \`.github/workflows/README_CLAUDE_REVIEW.md\` for setup instructions
+            **To enable PAL MCP consensus**:
+            1. Configure \`PAL_MCP_API_KEY\` and \`PAL_MCP_ENDPOINT\` secrets
+            2. See \`.github/workflows/README_CLAUDE_REVIEW.md\` for setup instructions
 
-                **Claude Code Review results are still available above.**`
+            **Claude Code Review results are still available above.**`
               });
-              core.info('PAL MCP not configured - posted notice comment');
             } catch (error) {
-              core.warning(`Failed to post comment (may lack permissions): ${error.message}`);
-              core.info('PAL MCP not configured - skipping consensus');
+              core.warning(`Failed to post comment: ${error.message}`);
             }
-            process.exit(0);  // Exit gracefully
 
       - name: Download Claude review
         if: steps.check-pal.outputs.configured == 'true'
@@ -184,13 +347,8 @@ jobs:
         if: steps.check-pal.outputs.configured == 'true'
         id: context
         run: |
-          # Get diff for context
           git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr-diff.patch
-
-          # Get list of changed files (first 10 for context)
           git diff --name-only origin/${{ github.base_ref }}...HEAD | head -10 > /tmp/changed-files.txt
-
-          # Count changes
           LINES_CHANGED=$(git diff --stat origin/${{ github.base_ref }}...HEAD | tail -1 | awk '{print $4+$6}')
           echo "lines_changed=$LINES_CHANGED" >> $GITHUB_OUTPUT
 
@@ -201,13 +359,12 @@ jobs:
           PAL_MCP_API_KEY: ${{ secrets.PAL_MCP_API_KEY }}
           PAL_MCP_ENDPOINT: ${{ secrets.PAL_MCP_ENDPOINT || 'https://pal-mcp.example.com/api/tools/consensus' }}
         run: |
-          # Build consensus request payload
           CLAUDE_REVIEW=$(cat /tmp/review-artifacts/claude-review.json | jq -R -s .)
           DIFF_CONTENT=$(cat /tmp/pr-diff.patch | jq -R -s .)
 
           cat > /tmp/consensus-request.json <<EOF
           {
-            "prompt": "Review this PR for security, correctness, and architectural concerns. Claude Code Review has already analyzed it. Provide a multi-model consensus on whether this change is safe to merge.\n\nPR Description: ${{ github.event.pull_request.title }}\n\nChanged Files:\n$(cat /tmp/changed-files.txt)\n\nClaude Review Summary:\n${CLAUDE_REVIEW}\n\nReason for consensus: ${{ needs.detect-high-stakes.outputs.reason }}",
+            "prompt": "Review this PR for CCP Digital Marketing (Rust/Tauri + Python recipes). Focus on security, correctness, and architecture. Claude Code Review has already analyzed it.\n\nPR: ${{ github.event.pull_request.title }}\n\nChanged Files:\n$(cat /tmp/changed-files.txt)\n\nClaude Review:\n${CLAUDE_REVIEW}\n\nReason: ${{ needs.detect-high-stakes.outputs.reason }}",
             "models": [
               {"model": "gpt-5-mini", "stance": "for", "stance_prompt": "Evaluate the benefits and improvements this change brings"},
               {"model": "claude-haiku-4.5", "stance": "against", "stance_prompt": "Identify security risks, bugs, and potential issues"},
@@ -219,16 +376,13 @@ jobs:
           }
           EOF
 
-          # Call PAL MCP API
           RESPONSE=$(curl -s -X POST "$PAL_MCP_ENDPOINT" \
             -H "Authorization: Bearer $PAL_MCP_API_KEY" \
             -H "Content-Type: application/json" \
             -d @/tmp/consensus-request.json)
 
-          # Save full response
           echo "$RESPONSE" > /tmp/consensus-result.json
 
-          # Extract recommendation
           RECOMMENDATION=$(echo "$RESPONSE" | jq -r '.synthesized_recommendation // "Error: No recommendation"')
           echo "recommendation<<EOF" >> $GITHUB_OUTPUT
           echo "$RECOMMENDATION" >> $GITHUB_OUTPUT
@@ -244,7 +398,7 @@ jobs:
             const reason = `${{ needs.detect-high-stakes.outputs.reason }}`;
             const sensitiveFiles = `${{ needs.detect-high-stakes.outputs.sensitive_files }}`;
 
-            const body = `## 🔒 Multi-Model Security Consensus
+            const body = `## Multi-Model Security Consensus
 
             **Trigger**: ${reason}
 
@@ -253,16 +407,15 @@ jobs:
             ${sensitiveFiles}
             \`\`\`
 
-            ### 🤖 Consensus Recommendation
+            ### Consensus Recommendation
 
             ${recommendation}
 
             ---
             **Models Consulted**: GPT-5-mini (for), Claude Haiku 4.5 (against), Gemini-2-Flash (neutral)
-            **Cost**: ~$3-5 for this consensus review
             **Phase**: 2 (Selective Consensus)
 
-            ⚠️ **Human review required** - Do not auto-merge security-sensitive changes.
+            **Human review required** - Do not auto-merge security-sensitive changes.
             `;
 
             await github.rest.issues.createComment({
@@ -273,6 +426,7 @@ jobs:
             });
 
       - name: Upload consensus artifact
+        if: steps.check-pal.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: pal-consensus-result
@@ -287,7 +441,7 @@ jobs:
     steps:
       - name: Generate summary
         run: |
-          echo "### 📊 Review Complete" >> $GITHUB_STEP_SUMMARY
+          echo "### Review Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Phase**: 2 (Selective Consensus)" >> $GITHUB_STEP_SUMMARY
           echo "- **High-Stakes**: ${{ needs.detect-high-stakes.outputs.is_high_stakes }}" >> $GITHUB_STEP_SUMMARY
@@ -302,8 +456,12 @@ jobs:
 
 # Required secrets:
 # - GITHUB_TOKEN (automatically provided)
-# - CLAUDE_CODE_OAUTH_TOKEN (from Claude Console)
-# - PAL_MCP_API_KEY (from PAL MCP provider)
+# - AWS_BEARER_TOKEN_BEDROCK (primary provider)
+# - AWS_REGION (default: us-east-1)
+# - ANTHROPIC_API_KEY (fallback provider)
+# - GEMINI_API_KEY (PAL MCP consensus)
+# - OPENAI_API_KEY (PAL MCP consensus)
+# - PAL_MCP_API_KEY (external consensus API, optional)
 # - PAL_MCP_ENDPOINT (optional, defaults to example.com)
 #
 # Required labels:

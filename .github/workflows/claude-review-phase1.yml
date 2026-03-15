@@ -2,6 +2,7 @@ name: Claude Review - Phase 1 (Comment Only)
 
 # Phase 1: Basic Claude Code Review with comment-only mode
 # Safe starting point - no PR creation, just review comments
+# Uses Bedrock primary + Anthropic fallback (same pattern as ci.yml claude-review)
 # Estimated cost: ~$1.50/PR | Latency: 2-5 minutes
 
 on:
@@ -26,23 +27,39 @@ jobs:
 
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
 
     # Prevent concurrent runs on same PR
     concurrency:
       group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
 
+    env:
+      BEDROCK_CONFIGURED: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK != '' }}
+      ANTHROPIC_KEY_SET: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for git blame analysis
+          fetch-depth: 0
+          sparse-checkout: |
+            scripts/
+            recipes/
+            gui/src-tauri/src/
+            gui/src/
+            tests/
+            CLAUDE.md
+            .github/config/
 
       - name: Check PR size (cost control)
         id: pr_size
         run: |
           # Get changed files count
-          FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | wc -l)
+          FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | wc -l | tr -d ' ')
           LINES_CHANGED=$(git diff --stat origin/${{ github.base_ref }}...HEAD | tail -1 | awk '{print $4+$6}')
 
           echo "files_changed=$FILES_CHANGED" >> $GITHUB_OUTPUT
@@ -51,7 +68,7 @@ jobs:
           # Cost control: Skip very large PRs (>1000 lines)
           if [ "$LINES_CHANGED" -gt 1000 ]; then
             echo "skip_review=true" >> $GITHUB_OUTPUT
-            echo "::warning::PR too large for AI review (>1000 lines). Use '/force-review' label to override."
+            echo "::warning::PR too large for AI review (>1000 lines). Add 'force-review' label to override."
           else
             echo "skip_review=false" >> $GITHUB_OUTPUT
           fi
@@ -62,34 +79,166 @@ jobs:
           echo "::notice::Skipping review for large PR. Add 'force-review' label to override."
           exit 0
 
-      - name: Run Claude Code Review
+      - name: Validate API provider
         if: steps.pr_size.outputs.skip_review == 'false' || contains(github.event.pull_request.labels.*.name, 'force-review')
+        run: |
+          if [ "${{ env.BEDROCK_CONFIGURED }}" != "true" ] && [ "${{ env.ANTHROPIC_KEY_SET }}" != "true" ]; then
+            echo "::error::No API provider configured. Add AWS Bedrock credentials OR ANTHROPIC_API_KEY."
+            exit 1
+          fi
+
+      - name: Install uv
+        if: steps.pr_size.outputs.skip_review == 'false' || contains(github.event.pull_request.labels.*.name, 'force-review')
+        uses: astral-sh/setup-uv@v4
+
+      - name: Create PAL MCP Config
+        if: steps.pr_size.outputs.skip_review == 'false' || contains(github.event.pull_request.labels.*.name, 'force-review')
+        run: |
+          cat > /tmp/pal-mcp-config.json << EOF
+          {
+            "mcpServers": {
+              "pal": {
+                "command": "uvx",
+                "args": ["--from", "git+https://github.com/BeehiveInnovations/pal-mcp-server.git", "pal-mcp-server"],
+                "env": {
+                  "GEMINI_API_KEY": "${{ secrets.GEMINI_API_KEY }}",
+                  "OPENAI_API_KEY": "${{ secrets.OPENAI_API_KEY }}"
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Get PR context
+        if: steps.pr_size.outputs.skip_review == 'false' || contains(github.event.pull_request.labels.*.name, 'force-review')
+        id: pr_context
+        run: |
+          PR_NUM=${{ github.event.pull_request.number || github.event.issue.number }}
+          echo "pr_number=$PR_NUM" >> $GITHUB_OUTPUT
+          echo "pr_title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+
+      # ========== PRIMARY: AWS Bedrock ==========
+      - name: Claude Code Review (Bedrock - Primary)
+        id: bedrock_review
+        if: |
+          env.BEDROCK_CONFIGURED == 'true' &&
+          (steps.pr_size.outputs.skip_review == 'false' || contains(github.event.pull_request.labels.*.name, 'force-review'))
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         with:
-          # Use Claude Opus 4.5 for high-quality reviews with strict tool allow-list
-          claude_args: |
-            code-review --comment \
-            --model claude-opus-4-5-20251101 \
-            --max-turns 20 \
-            --allowedTools "Bash(git diff *),Bash(git log *),Bash(git blame *),Read"
-
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_bedrock: "true"
+          show_full_output: true
+          prompt: |
+            You are an expert code reviewer for CCP Digital Marketing -- an event creation + social promotion automation platform (Rust/Tauri + Python recipes + vanilla JS frontend).
 
+            **PR**: #${{ steps.pr_context.outputs.pr_number }} - ${{ steps.pr_context.outputs.pr_title }}
+            **Files Changed**: ${{ steps.pr_size.outputs.files_changed }}
+            **Lines Changed**: ${{ steps.pr_size.outputs.lines_changed }}
+
+            ## Architecture Context
+            - **Rust backend**: `gui/src-tauri/src/` (composio.rs, config.rs, draft.rs, draft_commands.rs, recipe_commands.rs, progress.rs, db.rs, main.rs)
+            - **Python recipes**: `recipes/*.py` (self-contained Rube MCP scripts with duplicated helpers)
+            - **Python CLI**: `scripts/recipe_client.py`, `scripts/draft_store.py`
+            - **Frontend**: `gui/src/*.js` (vanilla JS, Tauri IPC bridge)
+
+            ## Review Instructions
+            1. Get the full diff: `gh pr diff ${{ steps.pr_context.outputs.pr_number }}`
+            2. Read `CLAUDE.md` for design principles
+            3. Focus areas:
+               - **Let It Crash**: No unauthorized try/except (most important principle)
+               - **Security**: XSS in frontend, path traversal in draft commands, input sanitization
+               - **Recipe patterns**: Self-contained, RECIPE docstring, bare variable output, no imports from scripts/
+               - **KISS**: Function length < 30 lines, nesting < 3 levels
+               - **Pure Functions**: Side effects pushed to boundaries
+            4. Post findings as PR comment: `gh pr comment ${{ steps.pr_context.outputs.pr_number }} --body "<markdown>"`
+
+            ## Review Format
+            ```
+            ## Code Review: Phase 1
+
+            **PR**: #[number] - [title]
+
+            ### Critical Issues
+            [Must fix before merge]
+
+            ### Warnings
+            [Should be addressed]
+
+            ### Positive Observations
+            [Good patterns observed]
+
+            **Overall Assessment**: [APPROVE / REQUEST CHANGES / NEEDS DISCUSSION]
+            ```
+          claude_args: >-
+            --mcp-config /tmp/pal-mcp-config.json
+            --allowed-tools
+            "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,mcp__pal__codereview,mcp__pal__listmodels"
+            --max-turns 20
+        env:
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      # ========== FALLBACK: Anthropic Direct API ==========
+      - name: Claude Code Review (Anthropic - Fallback)
+        id: anthropic_review
+        if: |
+          env.ANTHROPIC_KEY_SET == 'true' &&
+          (env.BEDROCK_CONFIGURED != 'true' || steps.bedrock_review.outcome != 'success') &&
+          (steps.pr_size.outputs.skip_review == 'false' || contains(github.event.pull_request.labels.*.name, 'force-review'))
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          show_full_output: true
+          prompt: |
+            You are an expert code reviewer for CCP Digital Marketing -- an event creation + social promotion automation platform (Rust/Tauri + Python recipes + vanilla JS frontend).
+
+            **PR**: #${{ steps.pr_context.outputs.pr_number }} - ${{ steps.pr_context.outputs.pr_title }}
+            **Files Changed**: ${{ steps.pr_size.outputs.files_changed }}
+
+            ## Review Instructions
+            1. Get the full diff: `gh pr diff ${{ steps.pr_context.outputs.pr_number }}`
+            2. Read `CLAUDE.md` for design principles
+            3. Focus: Let It Crash compliance, security, recipe patterns, KISS, pure functions
+            4. Post findings as PR comment
+
+            **Overall Assessment**: [APPROVE / REQUEST CHANGES / NEEDS DISCUSSION]
+          claude_args: >-
+            --mcp-config /tmp/pal-mcp-config.json
+            --allowed-tools
+            "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,mcp__pal__codereview,mcp__pal__listmodels"
+            --max-turns 20
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      # ========== FINAL STATUS ==========
       - name: Review metrics
         if: always()
         run: |
-          echo "### 📊 Review Metrics" >> $GITHUB_STEP_SUMMARY
+          BEDROCK_RESULT="${{ steps.bedrock_review.outcome }}"
+          ANTHROPIC_RESULT="${{ steps.anthropic_review.outcome }}"
+
+          echo "### Review Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "- Files changed: ${{ steps.pr_size.outputs.files_changed }}" >> $GITHUB_STEP_SUMMARY
           echo "- Lines changed: ${{ steps.pr_size.outputs.lines_changed }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Estimated cost: ~\$1.50" >> $GITHUB_STEP_SUMMARY
           echo "- Phase: 1 (Comment Only)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Provider | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| AWS Bedrock (Primary) | ${BEDROCK_RESULT:-skipped} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Anthropic API (Fallback) | ${ANTHROPIC_RESULT:-skipped} |" >> $GITHUB_STEP_SUMMARY
 
 # Required secrets:
 # - GITHUB_TOKEN (automatically provided)
-# - CLAUDE_CODE_OAUTH_TOKEN (from Claude Console)
-#
-# Setup instructions:
-# 1. Install Claude GitHub App: https://github.com/apps/claude
-# 2. Create OAuth token in Claude Console
-# 3. Add as repository secret: CLAUDE_CODE_OAUTH_TOKEN
+# - AWS_BEARER_TOKEN_BEDROCK (primary provider)
+# - AWS_REGION (default: us-east-1)
+# - ANTHROPIC_API_KEY (fallback provider)
+# - GEMINI_API_KEY (PAL MCP consensus)
+# - OPENAI_API_KEY (PAL MCP consensus)

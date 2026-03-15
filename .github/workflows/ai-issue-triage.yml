@@ -31,6 +31,8 @@ jobs:
           sparse-checkout: |
             scripts/
             recipes/
+            gui/src-tauri/src/
+            gui/src/
             tests/
             CLAUDE.md
           sparse-checkout-cone-mode: true
