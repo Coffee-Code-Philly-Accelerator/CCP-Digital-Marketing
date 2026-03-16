@@ -1213,7 +1213,7 @@ jobs:
 
       - name: Create issue on workflow failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -1350,7 +1350,7 @@ jobs:
         if: |
           always() &&
           steps.final-summary.outputs.pr_count == '0'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |

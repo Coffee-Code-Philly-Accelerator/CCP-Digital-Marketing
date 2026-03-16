@@ -155,7 +155,7 @@ jobs:
 
       - name: Create budget alert issue
         if: steps.budget.outputs.daily_exceeded == 'true' || steps.budget.outputs.monthly_exceeded == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -191,7 +191,7 @@ jobs:
 
       - name: Close budget alert if resolved
         if: steps.budget.outputs.daily_exceeded == 'false' && steps.budget.outputs.monthly_exceeded == 'false'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -222,7 +222,7 @@ jobs:
 
       - name: Create issue on workflow failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
