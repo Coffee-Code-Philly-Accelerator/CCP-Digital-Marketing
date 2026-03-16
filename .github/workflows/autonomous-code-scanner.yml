@@ -921,7 +921,7 @@ jobs:
         if: |
           needs.scan-formatting.outputs.has_changes == 'true' &&
           github.event.inputs.dry_run != 'true'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.PAT_TOKEN }}
           branch: scanner/formatting-${{ github.run_id }}
@@ -962,7 +962,7 @@ jobs:
         if: |
           needs.scan-security.outputs.has_findings == 'true' &&
           github.event.inputs.dry_run != 'true'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.PAT_TOKEN }}
           branch: scanner/security-${{ github.run_id }}
@@ -1027,7 +1027,7 @@ jobs:
           needs.scan-type-hints.result == 'success' &&
           needs.scan-type-hints.outputs.has_changes == 'true' &&
           github.event.inputs.dry_run != 'true'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.PAT_TOKEN }}
           branch: scanner/type-hints-${{ github.run_id }}
@@ -1096,7 +1096,7 @@ jobs:
           needs.scan-documentation.result == 'success' &&
           needs.scan-documentation.outputs.has_changes == 'true' &&
           github.event.inputs.dry_run != 'true'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.PAT_TOKEN }}
           branch: scanner/documentation-${{ github.run_id }}
