@@ -338,7 +338,7 @@ jobs:
 
       - name: Download Claude review
         if: steps.check-pal.outputs.configured == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: claude-review-result
           path: /tmp/review-artifacts/
