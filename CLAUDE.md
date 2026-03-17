@@ -68,17 +68,7 @@ cd gui/src-tauri && cargo build --release
 
 Desktop app providing both workflow telemetry viewing and recipe execution. Built with Tauri v2 (Rust backend + vanilla JS frontend).
 
-**Backend modules** (`gui/src-tauri/src/`):
-
-| Module | Purpose |
-|--------|---------|
-| `config.rs` | `AppConfig` struct, recipe IDs, platform constants (reads `COMPOSIO_API_KEY` + `CCP_*` env vars) |
-| `composio.rs` | `ComposioClient` — HTTP client mirroring Python `ComposioRecipeClient` (execute, poll, get details) |
-| `progress.rs` | `RecipeProgressEvent` + `emit_progress()` — emits `recipe-progress` Tauri events to frontend |
-| `recipe_commands.rs` | 5 IPC commands: `create_event`, `promote_event`, `social_post`, `full_workflow`, `get_recipe_info` |
-| `draft.rs` | Draft types + pure functions (slugify, build, validate) + file I/O — mirrors `scripts/draft_store.py` |
-| `draft_commands.rs` | 5 IPC commands: `generate_drafts`, `list_drafts_cmd`, `load_draft_cmd`, `approve_draft`, `publish_draft` |
-| `db.rs` | Telemetry SQLite queries (existing) |
+> See `.claude/rules/architecture-reference.md` for full module reference, IPC commands, DB schema, and file inventory.
 
 **Frontend** (`gui/src/`): 4-tab UI — Telemetry, Create Event, Social Post, Drafts. Real-time progress via Tauri event listener. Dark theme matching VS Code palette (#1e1e1e / #252526 / #4ec9b0).
 
@@ -255,10 +245,15 @@ Drafts are saved as JSON files in `drafts/` at the project root:
 ### CLI Commands
 
 ```bash
-# Generate drafts (calls recipe with mode=generate_only, saves to drafts/)
+# Generate event promotion drafts (calls recipe with mode=generate_only, saves to drafts/)
 python scripts/recipe_client.py generate-drafts \
   --title "Event" --date "March 20, 2026" --time "6:00 PM EST" \
   --location "Philly" --description "Desc" --event-url "https://example.com"
+
+# Generate social post drafts (non-event)
+python scripts/recipe_client.py generate-social-post-draft \
+  --topic "New Partnership" --content "We're partnering with TechHub!" \
+  --url "https://example.com" --tone "excited"
 
 # List all drafts
 python scripts/recipe_client.py list-drafts
@@ -452,176 +447,48 @@ When principles conflict, follow this priority order:
 
 ## CRITICAL: Let It Crash (Primary Principle)
 
-**This is the most important design principle in this codebase. Read this section first before writing ANY error handling code.**
-
 **CORE PRINCIPLE**: Embrace controlled failure. NO defensive programming. NO exponential backoffs. NO complex fallback chains. Let errors propagate and crash visibly.
 
-### The Golden Rule
+**The Golden Rule: Do NOT write `try/except`. Period.** The default for every function is zero error handling. Errors propagate, crash visibly, and give a full stack trace.
 
-**Do NOT write `try/except`. Period.**
-
-The default for every function is zero error handling. Errors propagate, crash visibly, and give a full stack trace. This is the correct behavior in virtually all cases.
-
-### Why No try/except
-
-| What try/except does | Why it's harmful |
-|----------------------|------------------|
-| Hides the root cause | Stack trace is lost or obscured |
-| Creates silent failures | Bugs survive in production undetected |
-| Adds code complexity | More branches, harder to reason about |
-| Encourages defensive coding | Treats symptoms instead of fixing sources |
-| Makes debugging harder | "It returned None" tells you nothing |
-
-### What to Do Instead
-
-**Use error-returning patterns.** This codebase already follows this: `run_composio_tool()` returns `(result, error)` tuples. Check the error value explicitly -- no exceptions needed.
+**Use error-returning patterns instead.** This codebase uses `run_composio_tool()` returning `(result, error)` tuples. Check the error value explicitly -- no exceptions needed.
 
 ```python
 # GOOD - Error values, not exceptions
 result, error = run_composio_tool("TOOL_NAME", args)
 if error:
-    print(f"Tool failed: {error}")
     output = {"status": "FAILED", "error": error}
 else:
     output = {"status": "DONE", "data": result}
-
-# GOOD - Let it crash for internal operations
-def create_event_payload(title: str, date: str, time: str) -> dict:
-    payload = {"event_title": title, "event_date": date, "event_time": time}
-    return payload  # No error handling needed!
 
 # GOOD - Validate inputs up front, don't catch failures later
 if not all([event_title, event_date, event_time]):
     raise ValueError("Missing required inputs")
 # Now proceed knowing inputs are valid -- no defensive checks downstream
-
-# GOOD - Use conditional logic instead of exception control flow
-response = invoke_llm(prompt)
-if response is None or response == "":
-    output = {"status": "FAILED", "error": "LLM returned empty response"}
-else:
-    output = {"status": "DONE", "content": response}
 ```
 
-### FORBIDDEN Patterns
+**FORBIDDEN patterns** (all of these hide root causes and delay fixes):
+- `try/except Exception: pass` — silent swallowing
+- `try/except: return None` — exception as control flow
+- Retry/backoff loops wrapping try/except
+- Nested try/except fallback chains
+- Defensive null checks that obscure the real problem (validate once at boundary, trust downstream)
 
-```python
-# FORBIDDEN - Silent swallowing
-try:
-    do_something()
-except Exception:
-    pass
+**The ONLY exception:** If a third-party library forces exception-based error handling, catch **one specific exception type** with a `# LET-IT-CRASH-EXCEPTION` annotation (e.g., `except ImportError` for optional imports). If you want more than this, **stop and redesign**.
 
-# FORBIDDEN - Exception as control flow
-try:
-    result = process_event(event)
-except Exception:
-    return None
-
-# FORBIDDEN - Retry/backoff loops
-for attempt in range(MAX_RETRIES):
-    try:
-        result = call_api()
-        break
-    except Exception:
-        time.sleep(2 ** attempt)
-
-# FORBIDDEN - Fallback chains
-try:
-    result = primary_method()
-except Exception:
-    try:
-        result = fallback_method()
-    except Exception:
-        result = default_value
-
-# FORBIDDEN - Defensive null checks that obscure the real problem
-def process_event(event):
-    if not event:
-        return  # Why is event None? Where did it come from?
-    if not event.get("title"):
-        return
-    if not event.get("date"):
-        return
-    # ... actual logic buried under defensive checks
-    # FIX: Validate once at the boundary, then trust the data downstream
-```
-
-### The ONLY Exception (Literally)
-
-If a third-party library forces exception-based error handling (no error-return alternative exists), you may catch **one specific exception type** with a `# LET-IT-CRASH-EXCEPTION` annotation. This should be rare -- most libraries used in this project (Composio tools, `invoke_llm`) already return error tuples.
-
-```python
-# LET-IT-CRASH-EXCEPTION: IMPORT_GUARD - module may not be installed
-try:
-    import optional_module
-except ImportError:
-    optional_module = None
-```
-
-If you find yourself wanting to write more than this, **stop and redesign**. The function signature or the calling pattern is wrong.
-
-### Code Review Rule
-
-**Any `try/except` block in a PR requires explicit justification in the PR description.** The default review stance is: remove it.
-
-### Testing Implications
-
-Tests should crash on unexpected errors -- not swallow them. A test that catches exceptions to avoid failure is hiding bugs, not proving correctness.
-
-- **Let assertions fail visibly.** A test that returns early on `None` instead of crashing tells you nothing about *why* the value was missing.
-- **Don't mock away error conditions.** If a function crashes when given bad data, that crash IS the test result -- it reveals missing validation at the boundary.
-- **Crash = signal.** An unexpected error in a test reveals integration issues, incorrect data assumptions, or missing upstream validation. Suppressing it delays the fix.
-
-```python
-# BAD - Test hides the real problem
-def test_create_event():
-    result = create_event_payload(title=None, date="2026-01-25", time="6 PM")
-    if result is None:
-        return  # Silently passes -- but WHY was result None?
-
-# GOOD - Test crashes visibly, revealing the issue
-def test_create_event():
-    result = create_event_payload(title="Hack Night", date="2026-01-25", time="6 PM")
-    assert result["event_title"] == "Hack Night"  # Crashes with clear message if wrong
-```
+**Code review rule:** Any `try/except` in a PR requires explicit justification. Default stance: remove it. Tests should also crash on unexpected errors -- never swallow exceptions to make tests pass.
 
 ---
 
 ## SOLID Principles
 
-**CORE PRINCIPLE**: Design systems with high cohesion and low coupling for maintainability, testability, and extensibility.
+**CORE PRINCIPLE**: High cohesion, low coupling. Don't over-engineer -- for simple utilities, pragmatism > purity.
 
-### 1. Single Responsibility Principle (SRP)
-
-> "A module should have one, and only one, reason to change"
-
-Each component/function/class should do ONE thing well. Separate concerns: state management != business logic != data fetching.
-
-```python
-# BAD - Function with multiple responsibilities
-def process_event(title, date, time, location):
-    sanitized = sanitize_all_inputs(title, date, time, location)  # Sanitization
-    payload = build_payload(sanitized)                             # Payload construction
-    result = call_browser_api(payload)                             # API call
-    post_to_social(result["url"])                                  # Social posting
-    return format_output(result)                                   # Formatting
-
-# GOOD - Single responsibility per function
-def sanitize_input(text: str, max_len: int = 2000) -> str:
-    """Sanitize user input for safe inclusion in task descriptions."""
-    if not text:
-        return ""
-    text = str(text)
-    text = ''.join(char for char in text if char >= ' ' or char in '\n\t')
-    return text[:max_len]
-```
-
-### 2. Open-Closed Principle (OCP)
-
-> "Software entities should be open for extension, but closed for modification"
-
-Add new features WITHOUT changing existing code. Use configuration and composition over modification.
+- **SRP** — Each function/module does ONE thing. Separate sanitization, payload construction, API calls, and formatting into distinct functions.
+- **OCP** — Extend via configuration, not modification. Use dicts/maps to add new behavior without changing existing code.
+- **LSP** — Implementations honor the base contract. Never strengthen preconditions, weaken postconditions, or throw unexpected errors. Return consistent shapes (e.g., `{"status": "SKIPPED"}` instead of raising).
+- **ISP** — Keep interfaces minimal and focused. Functions take only what they need (explicit params, not god-objects). Traits/classes cover one concern.
+- **DIP** — Depend on abstractions. Inject dependencies (API keys, clients) as parameters for testability. No `os.environ[]` deep in business logic.
 
 ```python
 # BAD - Must modify function for new platforms
@@ -630,14 +497,12 @@ def create_event(platform: str, details: dict):
         return create_luma_event(details)
     elif platform == "meetup":
         return create_meetup_event(details)
-    # New platform = code change every time
 
-# GOOD - Extensible via configuration
+# GOOD - Extensible via configuration (OCP)
 PLATFORM_RECIPES = {
     "luma": "rcp_mXyFyALaEsQF",
     "meetup": "rcp_kHJoI1WmR3AR",
     "partiful": "rcp_bN7jRF5P_Kf0",
-    # To add new platform: just extend this dict
 }
 
 def create_event(platform: str, details: dict):
@@ -645,256 +510,18 @@ def create_event(platform: str, details: dict):
     return execute_recipe(recipe_id, details)
 ```
 
-### 3. Liskov Substitution Principle (LSP)
-
-> "Subtypes must be substitutable for their base types without altering correctness"
-
-Implementations must honor the contract of the base type. Consumers shouldn't need to know the specific implementation.
-
-**Contract violations to watch for:**
-- **Strengthening preconditions**: Subtype rejects inputs the base type accepts
-- **Weakening postconditions**: Subtype returns less or different data than the base type promises
-- **Throwing unexpected errors**: Subtype crashes where the base type guarantees success
-
-```python
-# BAD - Subtype strengthens preconditions (violates LSP)
-class EventPoster:
-    def post(self, content: str, platform: str) -> dict:
-        """Post content to any platform. Returns {"status": "DONE", "url": "..."}."""
-        ...
-
-class RestrictedPoster(EventPoster):
-    def post(self, content: str, platform: str) -> dict:
-        if platform not in ("twitter", "linkedin"):
-            raise ValueError("Unsupported platform")  # Caller didn't expect this!
-        ...
-
-# GOOD - Subtype honors the base contract
-class RestrictedPoster(EventPoster):
-    def post(self, content: str, platform: str) -> dict:
-        if platform not in ("twitter", "linkedin"):
-            return {"status": "SKIPPED", "reason": f"{platform} not supported"}
-        ...  # Same return shape, no surprise errors
-```
-
-```rust
-// BAD - Trait impl violates the contract by panicking
-trait RecipeExecutor {
-    /// Execute a recipe. Returns Ok(output) or Err(message).
-    fn execute(&self, recipe_id: &str, input: serde_json::Value) -> Result<String, String>;
-}
-
-struct StrictExecutor;
-impl RecipeExecutor for StrictExecutor {
-    fn execute(&self, recipe_id: &str, input: serde_json::Value) -> Result<String, String> {
-        if recipe_id.is_empty() {
-            panic!("empty recipe ID");  // Caller expected Err, not a panic!
-        }
-        Ok("done".into())
-    }
-}
-
-// GOOD - Trait impl honors the Result contract
-impl RecipeExecutor for StrictExecutor {
-    fn execute(&self, recipe_id: &str, input: serde_json::Value) -> Result<String, String> {
-        if recipe_id.is_empty() {
-            return Err("empty recipe ID".into());  // Caller can handle this
-        }
-        Ok("done".into())
-    }
-}
-```
-
-### 4. Interface Segregation Principle (ISP)
-
-> "Clients should not be forced to depend on interfaces they don't use"
-
-Many specific interfaces > one general-purpose interface. Avoid "fat" interfaces that force implementing unused methods.
-
-```rust
-// BAD - Monolithic trait forces implementors to stub unused methods
-trait PlatformClient {
-    fn create_event(&self, details: &EventDetails) -> Result<String, String>;
-    fn post_social(&self, content: &str) -> Result<String, String>;
-    fn fetch_analytics(&self) -> Result<Vec<Metric>, String>;
-    fn manage_profile(&self, profile_id: &str) -> Result<(), String>;
-}
-
-// A social-only client must implement create_event and fetch_analytics as stubs
-struct TwitterClient;
-impl PlatformClient for TwitterClient {
-    fn create_event(&self, _: &EventDetails) -> Result<String, String> {
-        Err("not supported".into())  // Dead code -- ISP violation
-    }
-    fn post_social(&self, content: &str) -> Result<String, String> { /* ... */ Ok("done".into()) }
-    fn fetch_analytics(&self) -> Result<Vec<Metric>, String> {
-        Err("not supported".into())  // Dead code -- ISP violation
-    }
-    fn manage_profile(&self, _: &str) -> Result<(), String> {
-        Err("not supported".into())  // Dead code -- ISP violation
-    }
-}
-
-// GOOD - Segregated traits, implement only what's needed
-trait EventCreator {
-    fn create_event(&self, details: &EventDetails) -> Result<String, String>;
-}
-
-trait SocialPoster {
-    fn post_social(&self, content: &str) -> Result<String, String>;
-}
-
-trait AnalyticsProvider {
-    fn fetch_analytics(&self) -> Result<Vec<Metric>, String>;
-}
-
-// TwitterClient only implements what it actually does
-impl SocialPoster for TwitterClient {
-    fn post_social(&self, content: &str) -> Result<String, String> { /* ... */ Ok("done".into()) }
-}
-```
-
-```python
-# BAD - Function takes a god-object it barely uses
-def generate_social_copy(event: dict) -> str:
-    # Only needs title, date, url -- but takes the entire event dict
-    return f"Join us for {event['title']} on {event['date']}! {event['url']}"
-
-# GOOD - Function takes only what it needs (minimal interface)
-def generate_social_copy(title: str, date: str, url: str) -> str:
-    return f"Join us for {title} on {date}! {url}"
-```
-
-### 5. Dependency Inversion Principle (DIP)
-
-> "Depend on abstractions, not concretions"
-
-High-level modules shouldn't depend on low-level implementation details. Enables testing and swapping implementations.
-
-```python
-# BAD - Depends on concrete implementation
-class EventCreator:
-    def __init__(self):
-        self.api_key = os.environ["COMPOSIO_API_KEY"]  # Tight coupling!
-
-# GOOD - Inject dependencies
-class EventCreator:
-    def __init__(self, api_key: str):
-        self.api_key = api_key  # Testable, swappable
-```
-
-```rust
-// Rust DIP example: Abstract ComposioClient behind a trait for testability.
-// The real Tauri commands depend on the trait, not the concrete HTTP client.
-
-// Abstraction (trait)
-#[async_trait]
-trait RecipeClient {
-    async fn execute(&self, recipe_id: &str, input: serde_json::Value) -> Result<String, String>;
-    async fn poll_status(&self, execution_id: &str) -> Result<String, String>;
-}
-
-// Production implementation
-struct ComposioClient { api_key: String, base_url: String }
-
-#[async_trait]
-impl RecipeClient for ComposioClient {
-    async fn execute(&self, recipe_id: &str, input: serde_json::Value) -> Result<String, String> {
-        // Real HTTP call to Composio API
-        todo!()
-    }
-    async fn poll_status(&self, execution_id: &str) -> Result<String, String> {
-        todo!()
-    }
-}
-
-// Test implementation -- no network, deterministic
-struct MockClient { responses: HashMap<String, String> }
-
-#[async_trait]
-impl RecipeClient for MockClient {
-    async fn execute(&self, recipe_id: &str, _input: serde_json::Value) -> Result<String, String> {
-        self.responses.get(recipe_id).cloned().ok_or("not found".into())
-    }
-    async fn poll_status(&self, _execution_id: &str) -> Result<String, String> {
-        Ok("DONE".into())
-    }
-}
-
-// Command depends on abstraction, not ComposioClient directly
-async fn create_event(client: &dyn RecipeClient, details: serde_json::Value) -> Result<String, String> {
-    client.execute("rcp_mXyFyALaEsQF", details).await
-}
-```
-
-### Code Review Checklist
-
-- [ ] Does this component have a single, clear purpose? (SRP)
-- [ ] Can I add new behavior without modifying existing code? (OCP)
-- [ ] Can I substitute different implementations without breaking consumers? (LSP)
-- [ ] Are interfaces minimal and focused? (ISP)
-- [ ] Am I depending on abstractions, not concrete types? (DIP)
-
-**BALANCE**: Don't over-engineer. For simple utilities, pragmatism > purity.
-
-### SOLID and Testing
-
-Each SOLID principle directly enables better testing:
-
-| Principle | Testing Benefit |
-|-----------|----------------|
-| **SRP** | Small, focused units = small, focused tests. A function that does one thing needs one test suite, not a combinatorial explosion. |
-| **OCP** | New behavior = new tests, not rewriting old ones. Existing tests stay green when you extend via configuration. |
-| **LSP** | Write tests against the base contract, run them against every implementation. If a subtype passes the base tests, it's substitutable. |
-| **ISP** | Narrow interfaces = fewer test doubles. A mock that implements 2 methods is easier to maintain than one that stubs 10. |
-| **DIP** | Inject test doubles at construction. No monkey-patching, no test-only flags, no conditional imports. |
-
-```python
-# BAD - Hard dependency makes testing require real API calls
-class SocialPromoter:
-    def __init__(self):
-        self.client = ComposioRecipeClient()  # Can't swap in tests
-
-    def promote(self, event: dict) -> dict:
-        return self.client.execute_recipe("rcp_X65IirgPhwh3", event)
-
-# GOOD - Injected dependency, trivially testable
-class SocialPromoter:
-    def __init__(self, client):  # Accept any object with execute_recipe()
-        self.client = client
-
-    def promote(self, event: dict) -> dict:
-        return self.client.execute_recipe("rcp_X65IirgPhwh3", event)
-
-# In tests:
-class FakeClient:
-    def execute_recipe(self, recipe_id, input_data):
-        return {"status": "DONE", "results": {"twitter": "posted"}}
-
-promoter = SocialPromoter(client=FakeClient())
-result = promoter.promote({"title": "Hack Night"})
-assert result["status"] == "DONE"
-```
-
 ---
 
 ## KISS Principle (Keep It Simple, Stupid)
 
-**CORE PRINCIPLE**: Simplicity should be a key design goal; unnecessary complexity is the enemy of reliability and maintainability.
+**CORE PRINCIPLE**: Simplicity is a key design goal. Unnecessary complexity is the enemy of reliability.
 
-### Key Tenets
+> Decision metric: "Can the next engineer accurately predict behavior and modify it safely?"
 
-1. **Readable over Clever**: Code that any developer can understand beats elegant one-liners
-2. **Explicit over Implicit**: Clear intentions trump magic behavior
-3. **Do One Thing Well**: Avoid multi-purpose functions that try to handle every case
-4. **Avoid Premature Abstraction**: Wait for 3+ use cases before abstracting
-5. **Avoid Premature Optimization**: Simple first, optimize when proven necessary
-
-### Decision Metric
-
-> "Can the next engineer accurately predict behavior and modify it safely?"
-
-### Objective KISS Metrics
+- **Readable over Clever** — Code any developer can understand beats elegant one-liners
+- **Explicit over Implicit** — Clear intentions trump magic behavior
+- **Avoid Premature Abstraction** — Wait for 3+ use cases before abstracting
+- **Avoid Premature Optimization** — Simple first, optimize when proven necessary
 
 | Metric | Threshold | Action |
 |--------|-----------|--------|
@@ -904,15 +531,12 @@ assert result["status"] == "DONE"
 | Parameters | > 8 | Consider parameter object |
 | File length | > 500 lines | Consider module split |
 
-### Patterns
-
 ```python
 # BAD - Clever but hard to understand
 def process(d): return {k: v.strip().lower() for k, v in d.items() if v and isinstance(v, str) and not k.startswith('_')}
 
 # GOOD - KISS approach
 def normalize_data(data: dict[str, str]) -> dict[str, str]:
-    """Normalize string values in data dict."""
     result = {}
     for key, value in data.items():
         if key.startswith('_'):
@@ -923,61 +547,22 @@ def normalize_data(data: dict[str, str]) -> dict[str, str]:
     return result
 ```
 
-### Anti-Patterns to Avoid
-
-```python
-# BAD - Unnecessary abstraction for single use case
-class SingletonConfigManagerFactoryProvider:
-    _instance = None
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
-# GOOD - Just use the value directly
-CONFIG = {"browser_provider": "hyperbrowser", "max_steps": 25}
-
-# BAD - Clever ternary chains
-result = a if x else b if y else c if z else d
-
-# GOOD - Clear conditionals
-if x:
-    result = a
-elif y:
-    result = b
-elif z:
-    result = c
-else:
-    result = d
-```
-
 ---
 
 ## Pure Functions
 
-**CORE PRINCIPLE**: Functions should be deterministic transformations with no side effects--output depends ONLY on inputs.
-
-### Two Strict Requirements
+**CORE PRINCIPLE**: Functions should be deterministic transformations with no side effects -- output depends ONLY on inputs.
 
 1. **Deterministic**: Same inputs -> same output (always, every time)
 2. **No Side Effects**: No mutation, no I/O, no external state modification
 
-### What Makes a Function Impure
+**What makes a function impure:** global state, mutating inputs, I/O (`print`, file, network), non-determinism (`datetime.now()`), external calls. Fix by passing as parameters and pushing I/O to boundaries.
 
-| Impurity | Example | How to Fix |
-|----------|---------|------------|
-| Global state | Reading/writing module-level variables | Pass as parameters |
-| Mutation | Modifying input parameters | Return new objects |
-| I/O operations | `print()`, file read/write, network | Push to boundaries |
-| Non-determinism | `datetime.now()`, `random.random()` | Inject as parameters |
-| External calls | Database queries, API calls | Push to boundaries |
-
-### Pattern: Functional Core, Imperative Shell
+**Default to pure** for business logic, validation, data formatting. Push I/O to boundaries. If purity adds excessive wiring, KISS wins -- prefer a small explicit side effect over complex parameter threading.
 
 ```python
 # PURE CORE - Business logic as pure functions
 def build_task_description(title: str, date: str, time: str, location: str, description: str) -> str:
-    """Pure: deterministic string construction from inputs."""
     return f"""Create an event with these details:
     Title: {title}
     Date: {date}
@@ -986,53 +571,15 @@ def build_task_description(title: str, date: str, time: str, location: str, desc
     Description: {description}"""
 
 def determine_primary_url(luma_url: str, meetup_url: str, partiful_url: str) -> str:
-    """Pure: deterministic URL priority selection."""
     return luma_url or meetup_url or partiful_url or ""
 
-# IMPERATIVE SHELL - Side effects at boundaries
+# IMPERATIVE SHELL - Side effects at boundaries only
 def run_event_creation(event_details: dict) -> dict:
-    """Impure shell: I/O at boundaries, pure core for logic."""
-    # Side effect: API call
     result, error = run_composio_tool("BROWSER_TOOL_CREATE_TASK", {
-        "task": build_task_description(**event_details),  # Pure core
+        "task": build_task_description(**event_details),
     })
-
-    # Pure core
     primary_url = determine_primary_url(
-        result.get("luma_url", ""),
-        result.get("meetup_url", ""),
-        result.get("partiful_url", ""),
+        result.get("luma_url", ""), result.get("meetup_url", ""), result.get("partiful_url", ""),
     )
-
-    # Side effect: logging
-    print(f"Primary URL: {primary_url}")
-
     return {"event_url": primary_url, "status": "done"}
 ```
-
-### Decision Rules
-
-| Scenario | Recommendation |
-|----------|----------------|
-| Business logic / transformations | **Default to pure** |
-| Validation rules | **Default to pure** |
-| Data formatting / mapping | **Default to pure** |
-| I/O operations (API calls, browser tools) | Push to boundaries |
-| Logging / metrics | Push to boundaries |
-| Making it pure adds excessive wiring | Consider contained side effect |
-
-### KISS + Pure Functions Synergy
-
-Pure functions ARE KISS applied to function design--they eliminate the complexity of tracking state changes and side effects.
-
-> **KISS is the goal (minimize complexity); pure functions are one of the best tools to achieve it--so long as the purity itself doesn't add more complexity than it removes.**
-
-When purity increases ceremony (excessive parameter threading, complex type gymnastics), KISS may prefer a small, explicit side effect.
-
-### Code Review Checklist
-
-- [ ] Can this function be pure? (no external state needed?)
-- [ ] Are side effects pushed to boundaries?
-- [ ] Would making this pure add more complexity than it removes?
-- [ ] Is the simplest solution also the correct one?
-- [ ] Can the next engineer predict behavior and modify safely?

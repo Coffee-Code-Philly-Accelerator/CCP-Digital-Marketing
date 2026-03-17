@@ -481,22 +481,40 @@ def publish_from_draft(
         return {"error": f"Draft validation failed: {error}"}
 
     event = draft["event"]
-    input_data = {
-        "event_title": event["title"],
-        "event_date": event["date"],
-        "event_time": event["time"],
-        "event_location": event["location"],
-        "event_description": event["description"],
-        "event_url": event.get("url", ""),
-        "discord_channel_id": draft.get("platform_config", {}).get("discord_channel_id", ""),
-        "facebook_page_id": draft.get("platform_config", {}).get("facebook_page_id", ""),
-        "skip_platforms": draft.get("platform_config", {}).get("skip_platforms", ""),
-        "image_url": draft.get("image_url", ""),
-        "mode": "publish_only",
-        "pre_generated_copies": json.dumps(draft["copies"]),
-    }
+    draft_type = draft.get("draft_type", "event_promotion")
+    platform_cfg = draft.get("platform_config", {})
 
-    result = client.execute_recipe(RECIPE_IDS["social_promotion"], input_data)
+    if draft_type == "social_post":
+        input_data = {
+            "topic": event.get("title", ""),
+            "content": event.get("description", ""),
+            "url": event.get("url", ""),
+            "discord_channel_id": platform_cfg.get("discord_channel_id", ""),
+            "facebook_page_id": platform_cfg.get("facebook_page_id", ""),
+            "skip_platforms": platform_cfg.get("skip_platforms", ""),
+            "image_url": draft.get("image_url", ""),
+            "mode": "publish_only",
+            "pre_generated_copies": json.dumps(draft["copies"]),
+        }
+        recipe_id = RECIPE_IDS["social_post"]
+    else:
+        input_data = {
+            "event_title": event["title"],
+            "event_date": event["date"],
+            "event_time": event["time"],
+            "event_location": event["location"],
+            "event_description": event["description"],
+            "event_url": event.get("url", ""),
+            "discord_channel_id": platform_cfg.get("discord_channel_id", ""),
+            "facebook_page_id": platform_cfg.get("facebook_page_id", ""),
+            "skip_platforms": platform_cfg.get("skip_platforms", ""),
+            "image_url": draft.get("image_url", ""),
+            "mode": "publish_only",
+            "pre_generated_copies": json.dumps(draft["copies"]),
+        }
+        recipe_id = RECIPE_IDS["social_promotion"]
+
+    result = client.execute_recipe(recipe_id, input_data)
 
     # Update draft with results
     new_status = "published" if "error" not in result else "failed"
@@ -508,6 +526,76 @@ def publish_from_draft(
     print(f"[{ComposioRecipeClient._timestamp()}] Draft updated: {filepath} -> {new_status}")
 
     return result
+
+
+def generate_social_post_drafts(
+    client: ComposioRecipeClient,
+    topic: str,
+    content: str,
+    url: str = "",
+    image_url: str = "",
+    image_prompt: str = "",
+    tone: str = "",
+    cta: str = "",
+    hashtags: str = "",
+    discord_channel_id: str = "",
+    facebook_page_id: str = "",
+    skip_platforms: str = "",
+) -> dict[str, Any]:
+    """
+    Generate social media draft copies for a generic post without posting.
+
+    Calls the social post recipe with mode=generate_only to get
+    AI-generated copies + image, then saves them as a local draft file.
+
+    Returns:
+        Dict with draft filepath and generated content
+    """
+    from scripts.draft_store import build_draft, save_draft
+
+    input_data = {
+        "topic": topic,
+        "content": content,
+        "url": url,
+        "image_url": image_url,
+        "image_prompt": image_prompt,
+        "tone": tone,
+        "cta": cta,
+        "hashtags": hashtags,
+        "discord_channel_id": discord_channel_id,
+        "facebook_page_id": facebook_page_id,
+        "skip_platforms": skip_platforms,
+        "mode": "generate_only",
+    }
+
+    result = client.execute_recipe(RECIPE_IDS["social_post"], input_data)
+
+    copies = result.get("copies", {})
+    image_url_out = result.get("image_url", "")
+
+    if not copies:
+        print(f"[{ComposioRecipeClient._timestamp()}] Warning: No copies returned from recipe")
+        return result
+
+    drafts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "drafts")
+    event = {
+        "title": topic,
+        "date": "",
+        "time": "",
+        "location": "",
+        "description": content,
+        "url": url,
+    }
+    platform_config = {
+        "discord_channel_id": discord_channel_id,
+        "facebook_page_id": facebook_page_id,
+        "skip_platforms": skip_platforms,
+    }
+    draft = build_draft("social_post", event, copies, image_url_out, platform_config)
+    filepath = save_draft(drafts_dir, draft)
+    print(f"[{ComposioRecipeClient._timestamp()}] Draft saved: {filepath}")
+
+    return {"draft_filepath": filepath, "recipe_result": result}
 
 
 def post_to_social(
@@ -689,6 +777,24 @@ Environment Variables:
     gen_draft_parser.add_argument("--facebook-page", default="", help="Facebook page ID")
     gen_draft_parser.add_argument("--skip", default="", help="Platforms to skip")
 
+    # generate-social-post-draft command
+    gen_sp_draft_parser = subparsers.add_parser(
+        "generate-social-post-draft", help="Generate social post drafts without posting"
+    )
+    gen_sp_draft_parser.add_argument("--topic", required=True, help="What the post is about")
+    gen_sp_draft_parser.add_argument("--content", required=True, help="Main message/body text")
+    gen_sp_draft_parser.add_argument("--url", default="", help="Link to include in posts")
+    gen_sp_draft_parser.add_argument("--image-url", default="", help="Reuse existing image URL (skips Gemini)")
+    gen_sp_draft_parser.add_argument("--image-prompt", default="", help="Custom Gemini prompt for image generation")
+    gen_sp_draft_parser.add_argument(
+        "--tone", default="", help="Style: engaging, professional, casual, excited, informative"
+    )
+    gen_sp_draft_parser.add_argument("--cta", default="", help="Call-to-action text")
+    gen_sp_draft_parser.add_argument("--hashtags", default="", help="Custom hashtags to include")
+    gen_sp_draft_parser.add_argument("--discord-channel", default="", help="Discord channel ID")
+    gen_sp_draft_parser.add_argument("--facebook-page", default="", help="Facebook page ID")
+    gen_sp_draft_parser.add_argument("--skip", default="", help="Platforms to skip")
+
     # list-drafts command
     subparsers.add_parser("list-drafts", help="List all saved drafts")
 
@@ -776,6 +882,21 @@ Environment Variables:
             facebook_page_id=args.facebook_page,
             skip_platforms=args.skip,
         )
+    elif args.command == "generate-social-post-draft":
+        result = generate_social_post_drafts(
+            client=client,
+            topic=args.topic,
+            content=args.content,
+            url=args.url,
+            image_url=args.image_url,
+            image_prompt=args.image_prompt,
+            tone=args.tone,
+            cta=args.cta,
+            hashtags=args.hashtags,
+            discord_channel_id=args.discord_channel,
+            facebook_page_id=args.facebook_page,
+            skip_platforms=args.skip,
+        )
     elif args.command == "generate-drafts":
         result = generate_drafts(
             client=client,
@@ -797,10 +918,11 @@ Environment Variables:
         if not drafts:
             print("No drafts found.")
             sys.exit(0)
-        print(f"\n{'Status':<12} {'Title':<30} {'Date':<20} {'Filename'}")
-        print("-" * 90)
+        print(f"\n{'Status':<12} {'Type':<18} {'Title':<30} {'Date':<20} {'Filename'}")
+        print("-" * 110)
         for d in drafts:
-            print(f"{d['status']:<12} {d['title']:<30} {d['date']:<20} {d['filename']}")
+            draft_type = d.get("draft_type", "event_promotion")
+            print(f"{d['status']:<12} {draft_type:<18} {d['title']:<30} {d['date']:<20} {d['filename']}")
         sys.exit(0)
     elif args.command == "approve-draft":
         from scripts.draft_store import load_draft, save_draft, set_draft_status
