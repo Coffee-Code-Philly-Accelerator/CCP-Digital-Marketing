@@ -149,6 +149,36 @@ class TestCLIParsing:
             assert exc_info.value.code == 0
         assert mock_instance.get_recipe_details.call_count == 5
 
+    @patch("recipe_client.generate_social_post_drafts")
+    @patch("recipe_client.ComposioRecipeClient")
+    def test_generate_social_post_draft_command(self, mock_cls, mock_fn, mock_composio_api_key):
+        mock_fn.return_value = {"draft_filepath": "/tmp/draft.json"}
+        with patch(
+            "sys.argv",
+            [
+                "recipe_client.py",
+                "generate-social-post-draft",
+                "--topic",
+                "New Partnership",
+                "--content",
+                "We are partnering with TechHub!",
+                "--url",
+                "https://example.com",
+                "--tone",
+                "excited",
+                "--skip",
+                "twitter",
+            ],
+        ):
+            main()
+        mock_fn.assert_called_once()
+        kwargs = mock_fn.call_args.kwargs
+        assert kwargs["topic"] == "New Partnership"
+        assert kwargs["content"] == "We are partnering with TechHub!"
+        assert kwargs["url"] == "https://example.com"
+        assert kwargs["tone"] == "excited"
+        assert kwargs["skip_platforms"] == "twitter"
+
     def test_missing_api_key_exits(self, clean_env):
         with patch(
             "sys.argv",
