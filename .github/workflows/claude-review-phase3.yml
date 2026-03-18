@@ -265,7 +265,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ai-suggestions-patch
           path: /tmp/
@@ -332,7 +332,7 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
 
       - name: Download patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ai-suggestions-patch
           path: /tmp/

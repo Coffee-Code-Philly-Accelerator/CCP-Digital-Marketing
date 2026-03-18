@@ -137,7 +137,7 @@ jobs:
         run: pip install ruff
 
       - name: Download scannable files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: scannable-files
           path: /tmp
@@ -238,7 +238,7 @@ jobs:
         run: pip install bandit[toml]
 
       - name: Download scannable files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: scannable-files
           path: /tmp
@@ -439,7 +439,7 @@ jobs:
           python-version: '3.11'
 
       - name: Download scannable files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: scannable-files
           path: /tmp
@@ -626,7 +626,7 @@ jobs:
           python-version: '3.11'
 
       - name: Download scannable files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: scannable-files
           path: /tmp
@@ -823,7 +823,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: /tmp/artifacts
 
