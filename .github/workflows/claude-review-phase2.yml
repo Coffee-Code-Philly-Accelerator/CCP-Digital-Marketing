@@ -278,7 +278,7 @@ jobs:
 
       - name: Upload review artifact
         if: needs.detect-high-stakes.outputs.is_high_stakes == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: claude-review-result
           path: /tmp/review-artifacts/
@@ -427,7 +427,7 @@ jobs:
 
       - name: Upload consensus artifact
         if: steps.check-pal.outputs.configured == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pal-consensus-result
           path: /tmp/consensus-result.json

@@ -245,7 +245,7 @@ jobs:
 
       - name: Upload patch artifact
         if: steps.parse.outputs.has_suggestions == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ai-suggestions-patch
           path: /tmp/ai-suggestions.patch
