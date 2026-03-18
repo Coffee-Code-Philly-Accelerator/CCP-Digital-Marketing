@@ -520,6 +520,22 @@ pub async fn publish_draft(
         return Err(format!("Draft validation failed: {}", error));
     }
 
+    // Ensure social platform connections are active in this session
+    let needed_toolkits = vec!["twitter", "linkedin", "instagram", "facebook", "discordbot"];
+    if let Err(e) = client.ensure_connections(&needed_toolkits).await {
+        emit_progress(
+            &app,
+            RecipeProgressEvent {
+                command: "publish_draft".to_string(),
+                phase: "connections".to_string(),
+                status: "warning".to_string(),
+                elapsed_sec: 0,
+                message: format!("Connection check: {}", e),
+                result: None,
+            },
+        );
+    }
+
     let skip: Vec<&str> = draft
         .platform_config
         .skip_platforms
@@ -758,4 +774,27 @@ pub async fn chat_generate_draft(
         "image_url": result_image_url,
         "draft": serde_json::to_value(&draft_obj).map_err(|e| format!("Serialization error: {}", e))?,
     }))
+}
+
+/// Check or establish connections for social media toolkits.
+/// Returns status of each toolkit (active or redirect URL needed).
+#[tauri::command]
+pub async fn manage_connections(
+    client: tauri::State<'_, ComposioClient>,
+    toolkits: Option<Vec<String>>,
+) -> Result<Value, String> {
+    let default_toolkits = vec![
+        "twitter".to_string(),
+        "linkedin".to_string(),
+        "instagram".to_string(),
+        "facebook".to_string(),
+        "discordbot".to_string(),
+    ];
+    let toolkits = toolkits.unwrap_or(default_toolkits);
+    let toolkit_refs: Vec<&str> = toolkits.iter().map(|s| s.as_str()).collect();
+
+    match client.ensure_connections(&toolkit_refs).await {
+        Ok(()) => Ok(json!({ "status": "all_active", "message": "All connections are active" })),
+        Err(e) => Ok(json!({ "status": "needs_auth", "message": e })),
+    }
 }

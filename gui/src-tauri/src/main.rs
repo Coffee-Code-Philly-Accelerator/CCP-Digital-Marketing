@@ -50,6 +50,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
 
+    // Create tables if they don't exist
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS workflows (
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            workflow_type TEXT,
+            status TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS tool_calls (
+            id TEXT PRIMARY KEY,
+            workflow_id TEXT REFERENCES workflows(id),
+            tool_name TEXT,
+            status TEXT,
+            latency_ms INTEGER,
+            request_json TEXT,
+            response_json TEXT,
+            created_at TEXT
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
     println!("SQLite connection established (WAL mode)");
 
     // Initialize Composio client
@@ -88,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             draft_commands::approve_draft,
             draft_commands::publish_draft,
             draft_commands::chat_generate_draft,
+            draft_commands::manage_connections,
         ])
         .run(tauri::generate_context!())?;
 

@@ -88,6 +88,77 @@ impl ComposioClient {
         *guard = None;
     }
 
+    /// Ensure connections are active for the given toolkits in this session.
+    /// Returns Ok(()) if all active, or Err with redirect URLs for any that need auth.
+    pub async fn ensure_connections(&self, toolkits: &[&str]) -> Result<(), String> {
+        let session_id = self.ensure_session().await?;
+        let url = format!(
+            "{}/api/v3/tool_router/session/{}/execute",
+            self.config.api_base, session_id
+        );
+        let body = serde_json::json!({
+            "tool_slug": "COMPOSIO_MANAGE_CONNECTIONS",
+            "arguments": {
+                "toolkits": toolkits,
+            },
+        });
+
+        let response = self
+            .http
+            .post(&url)
+            .header("x-api-key", &self.config.api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Connection check failed: {}", e))?;
+
+        let status_code = response.status();
+        if !status_code.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "COMPOSIO_MANAGE_CONNECTIONS HTTP {}: {}",
+                status_code,
+                truncate_str(&text, 500)
+            ));
+        }
+
+        let result: Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Connection check parse error: {}", e))?;
+
+        // Check if any toolkit needs authentication
+        let data = extract_data(&result);
+        let results = data
+            .get("results")
+            .cloned()
+            .unwrap_or(Value::Object(serde_json::Map::new()));
+
+        let mut needs_auth = Vec::new();
+        if let Some(obj) = results.as_object() {
+            for (toolkit, info) in obj {
+                let status = info.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if status != "active" {
+                    let redirect = info
+                        .get("redirect_url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no URL)");
+                    needs_auth.push(format!("{}: {}", toolkit, redirect));
+                }
+            }
+        }
+
+        if needs_auth.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "These toolkits need authentication. Open these URLs to connect:\n{}",
+                needs_auth.join("\n")
+            ))
+        }
+    }
+
     /// Execute a tool via the v3 tool router session API.
     /// On 401/403, invalidates session and retries once.
     pub async fn execute_tool(
