@@ -6,21 +6,21 @@ use sqlx::Row;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkflowSummary {
-    pub id: i64,
+    pub id: String,
     pub user_id: String,
     pub workflow_type: String,
     pub status: String,
-    pub created_at: i64,
-    pub updated_at: i64,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ToolCallSummary {
-    pub id: i64,
+    pub id: String,
     pub tool_name: String,
     pub status: String,
     pub latency_ms: Option<i64>,
-    pub created_at: i64,
+    pub created_at: String,
 }
 
 /// List all workflows with optional filtering
@@ -60,7 +60,7 @@ pub async fn list_workflows(
 #[tauri::command]
 pub async fn get_workflow_tool_calls(
     pool: tauri::State<'_, SqlitePool>,
-    workflow_id: i64,
+    workflow_id: String,
 ) -> Result<Vec<ToolCallSummary>, String> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT id, tool_name, status, latency_ms, created_at FROM tool_calls WHERE workflow_id = ? ORDER BY created_at ASC"
@@ -129,14 +129,11 @@ pub async fn cleanup_expired(
     pool: tauri::State<'_, SqlitePool>,
     days: u32,
 ) -> Result<usize, String> {
-    let cutoff = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
-        - (days as i64 * 86400);
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
+    let cutoff_str = cutoff.to_rfc3339();
 
     let result = sqlx::query("DELETE FROM workflows WHERE created_at < ?")
-        .bind(cutoff)
+        .bind(&cutoff_str)
         .execute(pool.inner())
         .await
         .map_err(|e| format!("Database query failed: {}", e))?;
