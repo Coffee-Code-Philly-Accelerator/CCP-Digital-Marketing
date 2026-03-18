@@ -130,7 +130,10 @@ impl ComposioClient {
 
         // Check if any toolkit needs authentication
         let data = extract_data(&result);
-        let results = data.get("results").cloned().unwrap_or(Value::Object(serde_json::Map::new()));
+        let results = data
+            .get("results")
+            .cloned()
+            .unwrap_or(Value::Object(serde_json::Map::new()));
 
         let mut needs_auth = Vec::new();
         if let Some(obj) = results.as_object() {
