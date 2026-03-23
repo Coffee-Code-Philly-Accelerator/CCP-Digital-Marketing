@@ -21,6 +21,20 @@ use std::str::FromStr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load .env from project root (gui/src-tauri/../../.env)
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+    if let Some(dir) = &exe_dir {
+        // Try project root (4 levels up from target/debug/)
+        let project_env = dir.join("../../../../.env");
+        if project_env.exists() {
+            let _ = dotenvy::from_path(&project_env);
+        }
+    }
+    // Also try CWD
+    let _ = dotenvy::dotenv();
+
     // Database path
     let db_path = std::env::var("CCP_CACHE_DB_PATH").unwrap_or_else(|_| {
         dirs::home_dir()
@@ -118,6 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             draft_commands::publish_draft,
             draft_commands::chat_generate_draft,
             draft_commands::manage_connections,
+            draft_commands::initiate_connection,
         ])
         .run(tauri::generate_context!())?;
 

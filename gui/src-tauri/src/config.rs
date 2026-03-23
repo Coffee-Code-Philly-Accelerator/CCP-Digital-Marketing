@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::env;
 
+#[allow(dead_code)]
 pub struct AppConfig {
     pub api_base: String,
     pub api_key: String,
@@ -10,6 +11,8 @@ pub struct AppConfig {
     pub drafts_dir: String,
     pub discord_channel_id: String,
     pub facebook_page_id: String,
+    pub linkedin_account_id: String,
+    pub instagram_account_id: String,
 }
 
 impl AppConfig {
@@ -44,6 +47,8 @@ impl AppConfig {
             }),
             discord_channel_id: env::var("CCP_DISCORD_CHANNEL_ID").unwrap_or_default(),
             facebook_page_id: env::var("CCP_FACEBOOK_PAGE_ID").unwrap_or_default(),
+            linkedin_account_id: env::var("CCP_LINKEDIN_ACCOUNT_ID").unwrap_or_default(),
+            instagram_account_id: env::var("CCP_INSTAGRAM_ACCOUNT_ID").unwrap_or_default(),
         }
     }
 }

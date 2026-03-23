@@ -811,8 +811,12 @@
         <div class="form-section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                 <h3>Saved Drafts</h3>
-                <button class="btn-secondary" onclick="loadDraftsList()">Refresh</button>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-secondary" onclick="checkConnections()">Check Connections</button>
+                    <button class="btn-secondary" onclick="loadDraftsList()">Refresh</button>
+                </div>
             </div>
+            <div id="connection-status" style="display:none; margin-bottom: 12px;"></div>
             <table>
                 <thead>
                     <tr>

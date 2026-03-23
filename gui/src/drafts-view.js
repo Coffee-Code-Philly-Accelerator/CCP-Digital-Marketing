@@ -85,7 +85,10 @@ function renderDraftDetail(draft, filepath) {
 
         <div class="draft-actions">
             ${draft.status === 'draft' ? `<button data-action="approve" class="btn-primary">Approve</button>` : ''}
-            ${draft.status === 'approved' ? `<button data-action="publish" class="btn-primary">Publish</button>` : ''}
+            ${draft.status === 'approved' ? `
+                <button data-action="check-connections" class="btn-secondary">Check Connections</button>
+                <button data-action="publish" class="btn-primary">Publish</button>
+            ` : ''}
         </div>
 
         <div id="draft-action-progress" style="display:none;"></div>
@@ -101,6 +104,8 @@ function renderDraftDetail(draft, filepath) {
 
     const approveBtn = detailDiv.querySelector('[data-action="approve"]');
     if (approveBtn) approveBtn.addEventListener('click', () => approveDraft(filepath));
+    const checkBtn = detailDiv.querySelector('[data-action="check-connections"]');
+    if (checkBtn) checkBtn.addEventListener('click', () => checkConnectionsInDetail());
     const publishBtn = detailDiv.querySelector('[data-action="publish"]');
     if (publishBtn) publishBtn.addEventListener('click', () => publishDraft(filepath));
 }
@@ -191,6 +196,93 @@ async function submitGenerateDrafts() {
         stopListening('gen-draft-progress');
         document.getElementById('gen-draft-btn').disabled = false;
     }
+}
+
+// ============================================================================
+// Connection management
+// ============================================================================
+
+async function checkConnections() {
+    const { invoke } = window.__TAURI__.core;
+    const statusDiv = document.getElementById('connection-status');
+    statusDiv.style.display = 'block';
+    statusDiv.innerHTML = '<p class="loading">Checking connections...</p>';
+
+    try {
+        const result = await invoke('manage_connections', { toolkits: null });
+        renderConnectionStatus(statusDiv, result);
+    } catch (error) {
+        showError(statusDiv, 'Connection check failed: ' + String(error));
+    }
+}
+
+async function checkConnectionsInDetail() {
+    const { invoke } = window.__TAURI__.core;
+    const resultDiv = document.getElementById('draft-action-result');
+    resultDiv.innerHTML = '<p class="loading">Checking connections...</p>';
+
+    try {
+        const result = await invoke('manage_connections', { toolkits: null });
+        renderConnectionStatus(resultDiv, result);
+    } catch (error) {
+        showError(resultDiv, 'Connection check failed: ' + String(error));
+    }
+}
+
+function renderConnectionStatus(container, result) {
+    const allActive = result.all_active;
+    const results = result.results || {};
+
+    let html = '<div class="form-section" style="padding: 12px;">';
+    html += '<h4 style="margin-bottom: 8px;">' +
+        (allActive ? '<span style="color:#4ec9b0;">All connections active</span>'
+                   : '<span style="color:#f48771;">Some connections need attention</span>') +
+        '</h4>';
+
+    html += '<div style="display: flex; gap: 12px; flex-wrap: wrap;">';
+    for (const [toolkit, info] of Object.entries(results)) {
+        const status = info.status || 'unknown';
+        let color, label, hint;
+        switch (status) {
+            case 'active':
+                color = '#4ec9b0'; label = 'connected'; hint = '';
+                break;
+            case 'needs_auth':
+                color = '#f48771'; label = 'needs auth';
+                if (info.redirect_url) {
+                    hint = '<br><a href="' + escapeHtml(info.redirect_url) + '" target="_blank" ' +
+                        'style="color:#569cd6;font-size:12px;">Connect ' + escapeHtml(name) + ' &rarr;</a>';
+                } else {
+                    hint = '<br><span style="font-size:11px;color:#858585;">Click Check Connections to get auth link</span>';
+                }
+                break;
+            case 'needs_config':
+                color = '#cca700'; label = 'needs config';
+                hint = info.note ? '<br><span style="font-size:11px;color:#858585;">' +
+                    escapeHtml(info.note) + '</span>' : '';
+                break;
+            case 'config_required':
+                color = '#cca700'; label = 'needs config'; hint = '';
+                break;
+            case 'not_available':
+                color = '#858585'; label = info.note || 'unavailable'; hint = '';
+                break;
+            default:
+                color = '#f48771'; label = status;
+                hint = info.error ? '<br><span style="font-size:11px;color:#858585;">' +
+                    escapeHtml(info.error).substring(0, 100) + '</span>' : '';
+                break;
+        }
+
+        html += '<div style="padding: 6px 12px; background: #2d2d2d; border-radius: 4px; border-left: 3px solid ' + color + ';">';
+        html += '<strong style="color:' + color + ';">' + escapeHtml(toolkit) + '</strong>';
+        html += '<span style="margin-left: 8px; font-size: 12px; color: #858585;">' + escapeHtml(label) + '</span>';
+        html += hint;
+        html += '</div>';
+    }
+    html += '</div></div>';
+
+    container.innerHTML = html;
 }
 
 // Load drafts when tab is shown

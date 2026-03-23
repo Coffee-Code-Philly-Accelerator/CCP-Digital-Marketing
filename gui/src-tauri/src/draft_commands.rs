@@ -1,10 +1,11 @@
 //! Tauri IPC commands for draft management
 //!
-//! Draft generation uses native Composio v3 tool calls:
+//! Draft generation uses Composio v3 tool router session:
 //! - GEMINI_GENERATE_IMAGE for promotional images
 //! - COMPOSIO_SEARCH_GROQ_CHAT (Llama 3.3 70B) for platform-specific copy
 //!
-//! Draft publishing calls individual social platform APIs via v3 session.
+//! Draft publishing uses Composio v2 actions API with connectedAccountId
+//! for social platforms (LinkedIn, Instagram). AI tools stay on v3.
 
 use crate::composio::{
     extract_data, extract_image_url, extract_json_from_text, extract_llm_content, ComposioClient,
@@ -189,8 +190,26 @@ fn value_as_string_id(data: &Value, key: &str) -> String {
 }
 
 async fn post_to_linkedin(client: &ComposioClient, app: &AppHandle, draft: &Draft) -> String {
+    // LinkedIn uses v3 MCP endpoint (v2 API has expired LinkedIn API version 20241101)
+    // Pre-check: ensure LinkedIn is connected to the session
+    match client.initiate_connection("linkedin").await {
+        Ok(url) if url != "already_connected" => {
+            return format!(
+                "needs_auth: LinkedIn not connected. Complete OAuth at: {}",
+                url
+            );
+        }
+        Err(e) => {
+            return format!("failed: connection check - {}", e);
+        }
+        _ => {} // already_connected — proceed
+    }
+
+    let text = with_url(&draft.copies.linkedin, &draft.event.url);
+
+    // First get user info to find author URN
     let profile_result = client
-        .execute_tool(
+        .execute_tool_mcp(
             "LINKEDIN_GET_MY_INFO",
             &json!({}),
             app,
@@ -204,24 +223,32 @@ async fn post_to_linkedin(client: &ComposioClient, app: &AppHandle, draft: &Draf
         Err(e) => return format!("failed: {}", e),
     };
 
-    let li_id = profile_data
-        .get("id")
+    // MCP response may nest under response_dict or data.response_dict
+    let inner = profile_data
+        .get("response_dict")
+        .or_else(|| {
+            profile_data
+                .get("data")
+                .and_then(|d| d.get("response_dict"))
+        })
+        .unwrap_or(&profile_data);
+    let author = inner
+        .get("author_id")
+        .or_else(|| inner.get("id"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    if li_id.is_empty() {
+    if author.is_empty() {
         return "failed: could not determine user ID".to_string();
     }
 
-    let author = if li_id.starts_with("urn:li:") {
-        li_id.to_string()
+    let author = if author.starts_with("urn:li:") {
+        author.to_string()
     } else {
-        format!("urn:li:person:{}", li_id)
+        format!("urn:li:person:{}", author)
     };
 
-    let text = with_url(&draft.copies.linkedin, &draft.event.url);
-
     let post_result = client
-        .execute_tool(
+        .execute_tool_mcp(
             "LINKEDIN_CREATE_LINKED_IN_POST",
             &json!({
                 "author": author,
@@ -240,14 +267,50 @@ async fn post_to_linkedin(client: &ComposioClient, app: &AppHandle, draft: &Draf
     }
 }
 
+/// Check if a signed URL has likely expired (contains X-Amz-Expires with short TTL).
+fn is_signed_url_expired(url: &str) -> bool {
+    if !url.contains("X-Amz-Date=") || !url.contains("X-Amz-Expires=") {
+        return false;
+    }
+    // Parse X-Amz-Date (format: 20260320T163410Z) and X-Amz-Expires (seconds)
+    let date_str = url
+        .split("X-Amz-Date=")
+        .nth(1)
+        .and_then(|s| s.split('&').next())
+        .unwrap_or("");
+    let expires_str = url
+        .split("X-Amz-Expires=")
+        .nth(1)
+        .and_then(|s| s.split('&').next())
+        .unwrap_or("0");
+    let expires_sec: i64 = expires_str.parse().unwrap_or(0);
+
+    if let Ok(signed_at) = chrono::NaiveDateTime::parse_from_str(date_str, "%Y%m%dT%H%M%SZ") {
+        let expiry = signed_at + chrono::Duration::seconds(expires_sec);
+        let now = chrono::Utc::now().naive_utc();
+        now > expiry
+    } else {
+        false
+    }
+}
+
 async fn post_to_instagram(client: &ComposioClient, app: &AppHandle, draft: &Draft) -> String {
     if draft.image_url.is_empty() {
         return "skipped: no image available".to_string();
     }
+    if is_signed_url_expired(&draft.image_url) {
+        return "failed: image URL expired. Generate a new draft to get a fresh image.".to_string();
+    }
+
+    let account_id = &client.config.instagram_account_id;
+    if account_id.is_empty() {
+        return "skipped: CCP_INSTAGRAM_ACCOUNT_ID not set".to_string();
+    }
 
     let user_result = client
-        .execute_tool(
+        .execute_tool_v2(
             "INSTAGRAM_GET_USER_INFO",
+            account_id,
             &json!({}),
             app,
             "publish_draft",
@@ -266,8 +329,9 @@ async fn post_to_instagram(client: &ComposioClient, app: &AppHandle, draft: &Dra
     }
 
     let container_result = client
-        .execute_tool(
+        .execute_tool_v2(
             "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+            account_id,
             &json!({
                 "ig_user_id": ig_user_id,
                 "image_url": draft.image_url,
@@ -289,10 +353,10 @@ async fn post_to_instagram(client: &ComposioClient, app: &AppHandle, draft: &Dra
         return "failed: no container ID returned".to_string();
     }
 
-    // Use the auto-waiting publish tool
     let publish_result = client
-        .execute_tool(
-            "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH",
+        .execute_tool_v2(
+            "INSTAGRAM_CREATE_POST",
+            account_id,
             &json!({
                 "ig_user_id": ig_user_id,
                 "creation_id": creation_id,
@@ -520,22 +584,6 @@ pub async fn publish_draft(
         return Err(format!("Draft validation failed: {}", error));
     }
 
-    // Ensure social platform connections are active in this session
-    let needed_toolkits = vec!["twitter", "linkedin", "instagram", "facebook", "discordbot"];
-    if let Err(e) = client.ensure_connections(&needed_toolkits).await {
-        emit_progress(
-            &app,
-            RecipeProgressEvent {
-                command: "publish_draft".to_string(),
-                phase: "connections".to_string(),
-                status: "warning".to_string(),
-                elapsed_sec: 0,
-                message: format!("Connection check: {}", e),
-                result: None,
-            },
-        );
-    }
-
     let skip: Vec<&str> = draft
         .platform_config
         .skip_platforms
@@ -543,6 +591,27 @@ pub async fn publish_draft(
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
+
+    // Probe Instagram connection before publishing (LinkedIn uses MCP, checks at call time)
+    let probe_toolkits = vec!["instagram"];
+    let conn_status = client.check_connections(&probe_toolkits).await?;
+    let results = conn_status.get("results").cloned().unwrap_or(json!({}));
+    let mut needs_auth = Vec::new();
+    if let Some(obj) = results.as_object() {
+        for (toolkit, info) in obj {
+            let status = info.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if status == "needs_auth" && !skip.contains(&toolkit.as_str()) {
+                needs_auth.push(toolkit.clone());
+            }
+        }
+    }
+    if !needs_auth.is_empty() {
+        return Err(format!(
+            "Cannot publish: these platforms need authentication: {}. \
+             Use 'Check Connections' in the Drafts tab to connect your accounts.",
+            needs_auth.join(", ")
+        ));
+    }
 
     let discord_id = if draft.platform_config.discord_channel_id.is_empty() {
         &client.config.discord_channel_id
@@ -777,7 +846,7 @@ pub async fn chat_generate_draft(
 }
 
 /// Check or establish connections for social media toolkits.
-/// Returns status of each toolkit (active or redirect URL needed).
+/// Returns per-toolkit status with redirect URLs for any needing auth.
 #[tauri::command]
 pub async fn manage_connections(
     client: tauri::State<'_, ComposioClient>,
@@ -793,8 +862,20 @@ pub async fn manage_connections(
     let toolkits = toolkits.unwrap_or(default_toolkits);
     let toolkit_refs: Vec<&str> = toolkits.iter().map(|s| s.as_str()).collect();
 
-    match client.ensure_connections(&toolkit_refs).await {
-        Ok(()) => Ok(json!({ "status": "all_active", "message": "All connections are active" })),
-        Err(e) => Ok(json!({ "status": "needs_auth", "message": e })),
+    client.check_connections(&toolkit_refs).await
+}
+
+/// Initiate OAuth connection for a toolkit via v3 MCP endpoint.
+/// Returns the redirect URL for the user to complete in their browser.
+#[tauri::command]
+pub async fn initiate_connection(
+    client: tauri::State<'_, ComposioClient>,
+    toolkit: String,
+) -> Result<Value, String> {
+    let url = client.initiate_connection(&toolkit).await?;
+    if url == "already_connected" {
+        Ok(json!({"status": "active", "toolkit": toolkit}))
+    } else {
+        Ok(json!({"status": "auth_required", "toolkit": toolkit, "redirect_url": url}))
     }
 }
