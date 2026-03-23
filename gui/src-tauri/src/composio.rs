@@ -136,10 +136,7 @@ impl ComposioClient {
                     // LinkedIn uses MCP path — try initiate_connection to check status
                     match self.initiate_connection("linkedin").await {
                         Ok(url) if url == "already_connected" => {
-                            structured.insert(
-                                toolkit.to_string(),
-                                json!({"status": "active"}),
-                            );
+                            structured.insert(toolkit.to_string(), json!({"status": "active"}));
                         }
                         Ok(url) => {
                             all_active = false;
@@ -166,12 +163,12 @@ impl ComposioClient {
                             json!({"status": "needs_config", "note": "Set CCP_INSTAGRAM_ACCOUNT_ID env var"}),
                         );
                     } else {
-                        match self.probe_tool_v2("INSTAGRAM_GET_USER_INFO", account_id).await {
+                        match self
+                            .probe_tool_v2("INSTAGRAM_GET_USER_INFO", account_id)
+                            .await
+                        {
                             Ok(()) => {
-                                structured.insert(
-                                    toolkit.to_string(),
-                                    json!({"status": "active"}),
-                                );
+                                structured.insert(toolkit.to_string(), json!({"status": "active"}));
                             }
                             Err(e) => {
                                 all_active = false;
@@ -195,10 +192,7 @@ impl ComposioClient {
                     );
                 }
                 _ => {
-                    structured.insert(
-                        toolkit.to_string(),
-                        json!({"status": "config_required"}),
-                    );
+                    structured.insert(toolkit.to_string(), json!({"status": "config_required"}));
                 }
             }
         }
@@ -346,10 +340,7 @@ impl ComposioClient {
         );
 
         let session_id = self.ensure_session().await?;
-        let url = format!(
-            "{}/tool_router/{}/mcp",
-            self.config.api_base, session_id
-        );
+        let url = format!("{}/tool_router/{}/mcp", self.config.api_base, session_id);
 
         let rpc_body = json!({
             "jsonrpc": "2.0",
@@ -390,8 +381,14 @@ impl ComposioClient {
             .map(|line| &line[6..])
             .unwrap_or(&body);
 
-        let rpc_result: Value = serde_json::from_str(json_str)
-            .map_err(|e| format!("{} MCP parse error: {} (body: {})", tool_slug, e, truncate_str(&body, 200)))?;
+        let rpc_result: Value = serde_json::from_str(json_str).map_err(|e| {
+            format!(
+                "{} MCP parse error: {} (body: {})",
+                tool_slug,
+                e,
+                truncate_str(&body, 200)
+            )
+        })?;
 
         // Check for JSON-RPC error
         if let Some(err) = rpc_result.get("error") {
@@ -411,7 +408,10 @@ impl ComposioClient {
             .map_err(|e| format!("{} MCP inner parse error: {}", tool_slug, e))?;
 
         // Check Composio-level success
-        let successful = inner.get("successful").and_then(|v| v.as_bool()).unwrap_or(false);
+        let successful = inner
+            .get("successful")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if !successful {
             let err_msg = inner
                 .get("error")
@@ -449,10 +449,7 @@ impl ComposioClient {
     /// Returns the redirect URL for the user to complete OAuth.
     pub async fn initiate_connection(&self, toolkit: &str) -> Result<String, String> {
         let session_id = self.ensure_session().await?;
-        let url = format!(
-            "{}/tool_router/{}/mcp",
-            self.config.api_base, session_id
-        );
+        let url = format!("{}/tool_router/{}/mcp", self.config.api_base, session_id);
 
         let rpc_body = json!({
             "jsonrpc": "2.0",
@@ -485,8 +482,8 @@ impl ComposioClient {
             .map(|line| &line[6..])
             .unwrap_or(&body);
 
-        let rpc_result: Value = serde_json::from_str(json_str)
-            .map_err(|e| format!("Connection parse error: {}", e))?;
+        let rpc_result: Value =
+            serde_json::from_str(json_str).map_err(|e| format!("Connection parse error: {}", e))?;
 
         let content_text = rpc_result
             .get("result")
