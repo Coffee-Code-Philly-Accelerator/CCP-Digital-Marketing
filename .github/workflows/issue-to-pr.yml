@@ -62,7 +62,7 @@ jobs:
       issue_title: ${{ steps.issue-info.outputs.title }}
       branch_name: ${{ steps.issue-info.outputs.branch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -122,7 +122,7 @@ jobs:
       BRANCH_NAME: ${{ needs.preflight.outputs.branch_name }}
       PROTECTED_PATTERNS: ${{ needs.preflight.outputs.protected_patterns }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 0
@@ -220,7 +220,7 @@ jobs:
       BRANCH_NAME: ${{ needs.preflight.outputs.branch_name }}
       PROTECTED_PATTERNS: ${{ needs.preflight.outputs.protected_patterns }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ env.BRANCH_NAME }}
           token: ${{ secrets.PAT_TOKEN }}
@@ -379,7 +379,7 @@ jobs:
       BRANCH_NAME: ${{ needs.preflight.outputs.branch_name }}
       ISSUE_TITLE: ${{ needs.preflight.outputs.issue_title }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ env.BRANCH_NAME }}
           fetch-depth: 0
