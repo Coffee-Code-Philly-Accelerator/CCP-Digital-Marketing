@@ -4,8 +4,7 @@
 //! - GEMINI_GENERATE_IMAGE for promotional images
 //! - COMPOSIO_SEARCH_GROQ_CHAT (Llama 3.3 70B) for platform-specific copy
 //!
-//! Draft publishing uses Composio v2 actions API with connectedAccountId
-//! for social platforms (LinkedIn, Instagram). AI tools stay on v3.
+//! Draft publishing uses Composio v3 tool router session for all platforms.
 
 use crate::composio::{
     extract_data, extract_image_url, extract_json_from_text, extract_llm_content, ComposioClient,
@@ -190,26 +189,8 @@ fn value_as_string_id(data: &Value, key: &str) -> String {
 }
 
 async fn post_to_linkedin(client: &ComposioClient, app: &AppHandle, draft: &Draft) -> String {
-    // LinkedIn uses v3 MCP endpoint (v2 API has expired LinkedIn API version 20241101)
-    // Pre-check: ensure LinkedIn is connected to the session
-    match client.initiate_connection("linkedin").await {
-        Ok(url) if url != "already_connected" => {
-            return format!(
-                "needs_auth: LinkedIn not connected. Complete OAuth at: {}",
-                url
-            );
-        }
-        Err(e) => {
-            return format!("failed: connection check - {}", e);
-        }
-        _ => {} // already_connected — proceed
-    }
-
-    let text = with_url(&draft.copies.linkedin, &draft.event.url);
-
-    // First get user info to find author URN
     let profile_result = client
-        .execute_tool_mcp(
+        .execute_tool(
             "LINKEDIN_GET_MY_INFO",
             &json!({}),
             app,
@@ -223,32 +204,21 @@ async fn post_to_linkedin(client: &ComposioClient, app: &AppHandle, draft: &Draf
         Err(e) => return format!("failed: {}", e),
     };
 
-    // MCP response may nest under response_dict or data.response_dict
-    let inner = profile_data
-        .get("response_dict")
-        .or_else(|| {
-            profile_data
-                .get("data")
-                .and_then(|d| d.get("response_dict"))
-        })
-        .unwrap_or(&profile_data);
-    let author = inner
-        .get("author_id")
-        .or_else(|| inner.get("id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if author.is_empty() {
+    let li_id = value_as_string_id(&profile_data, "id");
+    if li_id.is_empty() {
         return "failed: could not determine user ID".to_string();
     }
 
-    let author = if author.starts_with("urn:li:") {
-        author.to_string()
+    let author = if li_id.starts_with("urn:li:") {
+        li_id
     } else {
-        format!("urn:li:person:{}", author)
+        format!("urn:li:person:{}", li_id)
     };
 
+    let text = with_url(&draft.copies.linkedin, &draft.event.url);
+
     let post_result = client
-        .execute_tool_mcp(
+        .execute_tool(
             "LINKEDIN_CREATE_LINKED_IN_POST",
             &json!({
                 "author": author,
@@ -302,15 +272,9 @@ async fn post_to_instagram(client: &ComposioClient, app: &AppHandle, draft: &Dra
         return "failed: image URL expired. Generate a new draft to get a fresh image.".to_string();
     }
 
-    let account_id = &client.config.instagram_account_id;
-    if account_id.is_empty() {
-        return "skipped: CCP_INSTAGRAM_ACCOUNT_ID not set".to_string();
-    }
-
     let user_result = client
-        .execute_tool_v2(
+        .execute_tool(
             "INSTAGRAM_GET_USER_INFO",
-            account_id,
             &json!({}),
             app,
             "publish_draft",
@@ -329,9 +293,8 @@ async fn post_to_instagram(client: &ComposioClient, app: &AppHandle, draft: &Dra
     }
 
     let container_result = client
-        .execute_tool_v2(
+        .execute_tool(
             "INSTAGRAM_CREATE_MEDIA_CONTAINER",
-            account_id,
             &json!({
                 "ig_user_id": ig_user_id,
                 "image_url": draft.image_url,
@@ -354,9 +317,8 @@ async fn post_to_instagram(client: &ComposioClient, app: &AppHandle, draft: &Dra
     }
 
     let publish_result = client
-        .execute_tool_v2(
-            "INSTAGRAM_CREATE_POST",
-            account_id,
+        .execute_tool(
+            "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH",
             &json!({
                 "ig_user_id": ig_user_id,
                 "creation_id": creation_id,
@@ -427,6 +389,25 @@ async fn post_to_discord(
             app,
             "publish_draft",
             "discord",
+        )
+        .await;
+
+    match result {
+        Ok(_) => "success".to_string(),
+        Err(e) => format!("failed: {}", e),
+    }
+}
+
+async fn post_to_twitter(client: &ComposioClient, app: &AppHandle, draft: &Draft) -> String {
+    let text = with_url(&draft.copies.twitter, &draft.event.url);
+
+    let result = client
+        .execute_tool(
+            "TWITTER_CREATION_OF_A_POST",
+            &json!({ "text": text }),
+            app,
+            "publish_draft",
+            "twitter",
         )
         .await;
 
@@ -584,6 +565,15 @@ pub async fn publish_draft(
         return Err(format!("Draft validation failed: {}", error));
     }
 
+    // Establish social platform connections in this session (same REST context as execute_tool)
+    let needed_toolkits = vec!["twitter", "linkedin", "instagram", "facebook", "discordbot"];
+    client.ensure_connections(&needed_toolkits).await.map_err(|e| {
+        format!(
+            "Cannot publish: {}. Use 'Check Connections' in the Drafts tab to connect your accounts.",
+            e
+        )
+    })?;
+
     let skip: Vec<&str> = draft
         .platform_config
         .skip_platforms
@@ -591,27 +581,6 @@ pub async fn publish_draft(
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
-
-    // Probe Instagram connection before publishing (LinkedIn uses MCP, checks at call time)
-    let probe_toolkits = vec!["instagram"];
-    let conn_status = client.check_connections(&probe_toolkits).await?;
-    let results = conn_status.get("results").cloned().unwrap_or(json!({}));
-    let mut needs_auth = Vec::new();
-    if let Some(obj) = results.as_object() {
-        for (toolkit, info) in obj {
-            let status = info.get("status").and_then(|v| v.as_str()).unwrap_or("");
-            if status == "needs_auth" && !skip.contains(&toolkit.as_str()) {
-                needs_auth.push(toolkit.clone());
-            }
-        }
-    }
-    if !needs_auth.is_empty() {
-        return Err(format!(
-            "Cannot publish: these platforms need authentication: {}. \
-             Use 'Check Connections' in the Drafts tab to connect your accounts.",
-            needs_auth.join(", ")
-        ));
-    }
 
     let discord_id = if draft.platform_config.discord_channel_id.is_empty() {
         &client.config.discord_channel_id
@@ -625,7 +594,14 @@ pub async fn publish_draft(
     };
 
     // Post to all platforms in parallel
-    let (linkedin_result, instagram_result, facebook_result, discord_result) = tokio::join!(
+    let (twitter_result, linkedin_result, instagram_result, facebook_result, discord_result) = tokio::join!(
+        async {
+            if skip.contains(&"twitter") {
+                "skipped".to_string()
+            } else {
+                post_to_twitter(&client, &app, &draft).await
+            }
+        },
         async {
             if skip.contains(&"linkedin") {
                 "skipped".to_string()
@@ -657,7 +633,7 @@ pub async fn publish_draft(
     );
 
     let mut results = json!({
-        "twitter_posted": "skipped: connection not available",
+        "twitter_posted": twitter_result,
         "linkedin_posted": linkedin_result,
         "instagram_posted": instagram_result,
         "facebook_posted": facebook_result,
@@ -666,6 +642,7 @@ pub async fn publish_draft(
     });
 
     let success_count = [
+        &twitter_result,
         &linkedin_result,
         &instagram_result,
         &facebook_result,

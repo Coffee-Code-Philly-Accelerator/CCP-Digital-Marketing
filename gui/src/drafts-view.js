@@ -251,7 +251,7 @@ function renderConnectionStatus(container, result) {
                 color = '#f48771'; label = 'needs auth';
                 if (info.redirect_url) {
                     hint = '<br><a href="' + escapeHtml(info.redirect_url) + '" target="_blank" ' +
-                        'style="color:#569cd6;font-size:12px;">Connect ' + escapeHtml(name) + ' &rarr;</a>';
+                        'style="color:#569cd6;font-size:12px;">Connect ' + escapeHtml(toolkit) + ' &rarr;</a>';
                 } else {
                     hint = '<br><span style="font-size:11px;color:#858585;">Click Check Connections to get auth link</span>';
                 }
