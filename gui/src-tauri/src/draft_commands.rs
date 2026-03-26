@@ -594,44 +594,43 @@ pub async fn publish_draft(
     };
 
     // Post to all platforms in parallel
-    let (twitter_result, linkedin_result, instagram_result, facebook_result, discord_result) =
-        tokio::join!(
-            async {
-                if skip.contains(&"twitter") {
-                    "skipped".to_string()
-                } else {
-                    post_to_twitter(&client, &app, &draft).await
-                }
-            },
-            async {
-                if skip.contains(&"linkedin") {
-                    "skipped".to_string()
-                } else {
-                    post_to_linkedin(&client, &app, &draft).await
-                }
-            },
-            async {
-                if skip.contains(&"instagram") {
-                    "skipped".to_string()
-                } else {
-                    post_to_instagram(&client, &app, &draft).await
-                }
-            },
-            async {
-                if skip.contains(&"facebook") {
-                    "skipped".to_string()
-                } else {
-                    post_to_facebook(&client, &app, &draft, facebook_id).await
-                }
-            },
-            async {
-                if skip.contains(&"discord") {
-                    "skipped".to_string()
-                } else {
-                    post_to_discord(&client, &app, &draft, discord_id).await
-                }
-            },
-        );
+    let (twitter_result, linkedin_result, instagram_result, facebook_result, discord_result) = tokio::join!(
+        async {
+            if skip.contains(&"twitter") {
+                "skipped".to_string()
+            } else {
+                post_to_twitter(&client, &app, &draft).await
+            }
+        },
+        async {
+            if skip.contains(&"linkedin") {
+                "skipped".to_string()
+            } else {
+                post_to_linkedin(&client, &app, &draft).await
+            }
+        },
+        async {
+            if skip.contains(&"instagram") {
+                "skipped".to_string()
+            } else {
+                post_to_instagram(&client, &app, &draft).await
+            }
+        },
+        async {
+            if skip.contains(&"facebook") {
+                "skipped".to_string()
+            } else {
+                post_to_facebook(&client, &app, &draft, facebook_id).await
+            }
+        },
+        async {
+            if skip.contains(&"discord") {
+                "skipped".to_string()
+            } else {
+                post_to_discord(&client, &app, &draft, discord_id).await
+            }
+        },
+    );
 
     let mut results = json!({
         "twitter_posted": twitter_result,

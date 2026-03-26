@@ -277,30 +277,25 @@ impl ComposioClient {
                         }
                     }
                 }
-                "twitter" => {
-                    match self.initiate_connection("twitter").await {
-                        Ok(url) if url == "already_connected" => {
-                            structured.insert(
-                                toolkit.to_string(),
-                                json!({"status": "active"}),
-                            );
-                        }
-                        Ok(url) => {
-                            all_active = false;
-                            structured.insert(
-                                toolkit.to_string(),
-                                json!({"status": "needs_auth", "redirect_url": url}),
-                            );
-                        }
-                        Err(e) => {
-                            all_active = false;
-                            structured.insert(
-                                toolkit.to_string(),
-                                json!({"status": "error", "error": truncate_str(&e, 200)}),
-                            );
-                        }
+                "twitter" => match self.initiate_connection("twitter").await {
+                    Ok(url) if url == "already_connected" => {
+                        structured.insert(toolkit.to_string(), json!({"status": "active"}));
                     }
-                }
+                    Ok(url) => {
+                        all_active = false;
+                        structured.insert(
+                            toolkit.to_string(),
+                            json!({"status": "needs_auth", "redirect_url": url}),
+                        );
+                    }
+                    Err(e) => {
+                        all_active = false;
+                        structured.insert(
+                            toolkit.to_string(),
+                            json!({"status": "error", "error": truncate_str(&e, 200)}),
+                        );
+                    }
+                },
                 _ => {
                     structured.insert(toolkit.to_string(), json!({"status": "config_required"}));
                 }
