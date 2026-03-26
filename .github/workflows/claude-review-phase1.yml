@@ -89,7 +89,7 @@ jobs:
 
       - name: Install uv
         if: steps.pr_size.outputs.skip_review == 'false' || contains(github.event.pull_request.labels.*.name, 'force-review')
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
 
       - name: Create PAL MCP Config
         if: steps.pr_size.outputs.skip_review == 'false' || contains(github.event.pull_request.labels.*.name, 'force-review')
