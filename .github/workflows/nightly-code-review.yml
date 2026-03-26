@@ -39,7 +39,7 @@ jobs:
       protected_patterns: ${{ steps.load-config.outputs.protected_patterns }}
       commits_to_scan: ${{ steps.params.outputs.commits }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -140,7 +140,7 @@ jobs:
       PROTECTED_PATTERNS: ${{ needs.preflight.outputs.protected_patterns }}
       COMMITS_TO_SCAN: ${{ needs.preflight.outputs.commits_to_scan }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 0
@@ -247,7 +247,7 @@ jobs:
         run: |
           echo "REVIEW_BRANCH=nightly-review/$(date -u +%Y-%m-%d)" >> $GITHUB_ENV
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ env.REVIEW_BRANCH }}
           token: ${{ secrets.PAT_TOKEN }}
