@@ -423,7 +423,7 @@ jobs:
 
       - name: Comment on original PR
         if: steps.create_pr.outputs.pull-request-number
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -477,7 +477,7 @@ jobs:
 
     steps:
       - name: Post security notice
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
