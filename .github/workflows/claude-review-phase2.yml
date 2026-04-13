@@ -312,7 +312,7 @@ jobs:
       - name: Post configuration notice
         if: steps.check-pal.outputs.configured == 'false'
         continue-on-error: true
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -390,7 +390,7 @@ jobs:
 
       - name: Post consensus comment
         if: steps.check-pal.outputs.configured == 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
